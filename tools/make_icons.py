@@ -1,5 +1,5 @@
 from PIL import Image, ImageDraw
-P = [(155,188,15),(139,172,15),(48,98,48),(15,56,15)]
+from sprite_palette import GREEN as P
 def icon(size):
     s = 32; im = Image.new("RGB", (s, s), P[3]); d = ImageDraw.Draw(im)
     d.ellipse([16, 4, 27, 15], fill=P[0]); d.rectangle([19,7,20,8], fill=P[1]); d.rectangle([23,11,24,12], fill=P[1])

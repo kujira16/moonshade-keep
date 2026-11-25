@@ -3,9 +3,12 @@
 import numpy as np
 from PIL import Image
 
+if __package__:
+    from .sprite_palette import GREEN, SHADE_BY_RGB
+else:
+    from sprite_palette import GREEN, SHADE_BY_RGB
 
-PALETTE = np.array([(0, 0, 0, 0), (155, 188, 15, 255), (139, 172, 15, 255),
-                    (48, 98, 48, 255), (15, 56, 15, 255)], dtype=np.uint8)
+PALETTE = np.array([(0, 0, 0, 0), *((*rgb, 255) for rgb in GREEN)], dtype=np.uint8)
 NEIGHBORS = ((-1, 0), (1, 0), (0, -1), (0, 1))
 
 
@@ -49,43 +52,75 @@ def classify(rgba, allowed):
         normalized = ((contrast[:, None] - colors) ** 2).sum(axis=2)
         # Keep the specified palette stable, including nearly solid generated colors.
         distance = np.where((distance.min(axis=1) < 28 ** 2)[:, None], distance, normalized)
-    indexed[opaque] = np.array(allowed)[distance.argmin(axis=1)]
+    result = np.array(allowed)[distance.argmin(axis=1)]
+    for color, shade in SHADE_BY_RGB.items():
+        closest = min(allowed, key=lambda value: abs(value - shade))
+        result[np.all(rgb == color, axis=1)] = closest
+    indexed[opaque] = result
     return indexed
 
 
-def read_sheet(image, cols, rows, allowed=(1, 2, 3, 4), opaque_tile=False, aligned=False):
-    rgba = np.asarray(image.convert("RGBA"))
+def cell_boxes(rgba, cols, rows, aligned):
     height, width = rgba.shape[:2]
-    visual = rgba.astype(np.float32)
-    visual[:, :, :3] *= visual[:, :, 3:] / 255
     if aligned:
         pitch_x, x0 = width / cols, 0
         pitch_y, y0 = height / rows, 0
     else:
+        visual = rgba.astype(np.float32)
+        visual[:, :, :3] *= visual[:, :, 3:] / 255
         x_edges = np.abs(np.diff(visual, axis=1)).sum(axis=(0, 2))
         y_edges = np.abs(np.diff(visual, axis=0)).sum(axis=(1, 2))
         pitch_x, x0 = find_grid(x_edges, cols)
         pitch_y, y0 = find_grid(y_edges, rows)
-    indexed = classify(rgba, allowed)
-    sheet = np.zeros((rows, cols), dtype=np.uint8)
-    agreement = []
     for y in range(rows):
         top = max(0, round(y0 + (y + .25) * pitch_y))
         bottom = min(height, round(y0 + (y + .75) * pitch_y))
         for x in range(cols):
             left = max(0, round(x0 + (x + .25) * pitch_x))
             right = min(width, round(x0 + (x + .75) * pitch_x))
-            cell = indexed[top:bottom, left:right] if bottom > top and right > left else np.empty(0, dtype=np.uint8)
-            votes = np.bincount(cell.ravel(), minlength=5)
-            if not votes.sum():
-                continue
-            if votes[0] * 2 < votes.sum():
-                sheet[y, x] = np.argmax(votes[1:]) + 1
-            if votes[0] != votes.sum():
-                agreement.append(votes[sheet[y, x]] / votes.sum())
+            if bottom > top and right > left:
+                yield x, y, np.s_[top:bottom, left:right]
+
+
+def read_sheet(image, cols, rows, allowed=(1, 2, 3, 4), opaque_tile=False, aligned=False):
+    rgba = np.asarray(image.convert("RGBA"))
+    indexed = classify(rgba, allowed)
+    sheet = np.zeros((rows, cols), dtype=np.uint8)
+    agreement = []
+    for x, y, region in cell_boxes(rgba, cols, rows, aligned):
+        votes = np.bincount(indexed[region].ravel(), minlength=5)
+        if votes[0] * 2 < votes.sum():
+            sheet[y, x] = np.argmax(votes[1:]) + 1
+        if votes[0] != votes.sum():
+            agreement.append(votes[sheet[y, x]] / votes.sum())
     if opaque_tile:
         sheet[sheet == 0] = max(allowed)
     return sheet, float(np.mean(agreement)) if agreement else 0.0
+
+
+def read_color_sheet(image, cols, rows, aligned=False):
+    """Sample the dominant RGB cluster at the center of each logical cell."""
+    rgba = np.asarray(image.convert("RGBA"))
+    output = np.zeros((rows, cols, 4), dtype=np.uint8)
+    agreement = []
+    for x, y, region in cell_boxes(rgba, cols, rows, aligned):
+        cell = rgba[region].reshape(-1, 4)
+        opaque = cell[cell[:, 3] >= 128, :3].astype(np.int32)
+        if not len(opaque):
+            continue
+        if len(opaque) * 2 <= len(cell):
+            agreement.append(1 - len(opaque) / len(cell))
+            continue
+        bins = opaque // 16
+        codes = (bins[:, 0] << 8) | (bins[:, 1] << 4) | bins[:, 2]
+        values, counts = np.unique(codes, return_counts=True)
+        winner = counts.argmax()
+        cluster = opaque[codes == values[winner]]
+        center = cluster[0] // 16 * 16 + 8
+        rgb = cluster[((cluster - center) ** 2).sum(axis=1).argmin()]
+        output[y, x] = (*rgb, 255)
+        agreement.append(len(cluster) / len(cell))
+    return output, float(np.mean(agreement)) if agreement else 0.0
 
 
 def bounds(frame):

@@ -12,9 +12,9 @@ import argparse
 import os
 import shutil
 from PIL import Image
+from knight_parts import HEAD_ROWS
+from sprite_palette import GREEN as PAL, SHADE_BY_RGB as IDX
 
-PAL = [(0x9b, 0xbc, 0x0f), (0x8b, 0xac, 0x0f), (0x30, 0x62, 0x30), (0x0f, 0x38, 0x0f)]
-IDX = {c: i + 1 for i, c in enumerate(PAL)}
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "..", "assets")
 SRC = os.path.join(ASSETS, "source")
@@ -84,9 +84,9 @@ def outline(px, fw):
 
 def polished_actor(name):
     px = load(name)
-    if not name.startswith("player_"):
-        px = remap(px, ACTOR)
-    return outline(px, FRAME_W.get(name, 16))
+    if name.startswith("player_"):
+        return px
+    return outline(remap(px, ACTOR), FRAME_W.get(name, 16))
 
 
 def main():
@@ -104,7 +104,7 @@ def main():
         px = polished_actor(name)
         if name == "player_walk":
             idle = polished_actor("player_idle")
-            for y in range(7):
+            for y in range(HEAD_ROWS):
                 px[y] = idle[y] * (len(px[y]) // len(idle[y]))
         save(name, px)
 

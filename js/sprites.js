@@ -427,12 +427,14 @@
 
   // ---- パレット
   const PALETTES = {
-    green: ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"],
+    green: ["#e0f8d0", "#88c070", "#346856", "#081820"],
     pocket: ["#e0e0d0", "#a8a898", "#585850", "#181810"],
     moon: ["#e8e0f8", "#9890c0", "#484070", "#100820"],
   };
-  // すでに緑4階調で保存されたPNGは、元の階調番号をそのまま使う。
-  const greenShades = new Map(PALETTES.green.map((hex, i) => [parseInt(hex.slice(1), 16), i + 1]));
+  // 新旧の緑4階調PNGは、元の階調番号をそのまま使う。
+  const legacyGreen = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+  const greenShades = new Map([legacyGreen, PALETTES.green].flatMap(palette =>
+    palette.map((hex, i) => [parseInt(hex.slice(1), 16), i + 1])));
 
   // 文字列 -> 0..4 の数値配列
   function parse(frame) {
