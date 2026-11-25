@@ -16,7 +16,7 @@ window.LEVEL1 = {
     "....................................##bbbbbbbbbbbbIbbbbbbbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbCbbbbbbbbbIbbCSbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbbb##bbbbbbbbbbbbbbbbbb##",
     "....................................##bbbbbbbbbb======bbbbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbIbbbbbbbbbb######bbbbbbbbbbbbbbbbbbbbb=====bIbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb===bbbbbbbb===bb##",
     "...............................==...##bbbbbbbbbbbbIbbbbbbbbbbbbbbbIbbbbbbbbbbbbbbbbbb==bbbbb########bbbb########bbb######====bbbb==bbbbbbbbbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb##",
-    "...P....C.......C.......C..S........bbbbbb##bbCbbbIbbbbSbbbbbbbbbbIbCbSbbbbbbbbbCbbbbbbbbRbb########bbbb########bbb######bbbbSbbbbbbbbbbCbbbbbbbbbSbIbCbbbbbSbbbbbbbCbbbbbRbbbbbbbbbbbbbbbbbbbbbbbbbbb##",
+    "...P....C.......C.......C..S........bbbbbb##bbCbbbIbbbbSbbbbbbbbbbIbCbSbbbbbbbbbCbbbbbbbbRbb########bbbb########bbb######bbbbbbbbbbbbbbbCbbbSbbbbbSbIbCbbbbbSbbbbbbbCbbbbbRbbbbbbbbbbbbbbbbbbbbbbbbbbb##",
     "....................................bbbb####bbbbbbIbbbbbbbbbbbb^^^Ibbbbbbbbbbbbbbbbbbbbbbbbb########^^^^########^^^######bbbbbbbbbbbbbbbbbbbbbbbbbbbIbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb##",
     "##############################....##################################################....########################################....####################################################################",
     "##############################....##################################################....########################################....####################################################################",

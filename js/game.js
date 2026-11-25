@@ -205,8 +205,8 @@
     });
     const p = checkpoint || start;
     player = { x: p.x, y: p.y, w: 8, h: 14, vx: 0, vy: 0, face: 1, hp: 8, max: 8, onGround: false,
-      coyote: 0, jumpBuf: 0, atk: 0, atkAir: false, hurt: 0, inv: 60, anim: 0, dead: false };
-    cam = clamp(player.x - 76, 0, MW * T - W);
+      coyote: 0, jumpBuf: 0, atk: 0, atkAir: false, hurt: 0, inv: 0, anim: 0, dead: false };
+    cam = clamp(Math.round(player.x) - 76, 0, MW * T - W);
     Sound.music("stage");
   }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -489,8 +489,17 @@
     for (const q of parts) q.t++;
     parts = parts.filter((q) => q.t < 15);
 
-    if (!bossLock) cam += (clamp(player.x - 76, 0, MW * T - W) - cam) * 0.12;
-    else cam += (LV.arenaX * T - cam) * 0.1;
+    // カメラは常に整数ピクセル。中央の「遊び」の範囲内ではスクロールしないので、
+    // キャラと背景の1pxずれ（ガタつき・チラつき）が起きない
+    if (!bossLock) {
+      const px = Math.round(player.x);
+      let c = cam;
+      if (px - c > 84) c = px - 84; else if (px - c < 64) c = px - 64;
+      cam = clamp(c, 0, MW * T - W);
+    } else {
+      const tgt = LV.arenaX * T;
+      cam = cam < tgt ? Math.min(tgt, cam + 2) : Math.max(tgt, cam - 2);
+    }
 
     if (state === "dying" && stateT > 100) {
       lives--;
@@ -529,25 +538,26 @@
     const P = pal();
     ctx.fillStyle = P[3]; ctx.fillRect(0, oy, W, 128);
     ctx.fillStyle = P[2];
-    for (const [sx, sy] of STARS) { const x = Math.round(((sx - cam * 0.03) % 220 + 220) % 220); if (x < W && (frame + sx) % 140 > 4) ctx.fillRect(x, oy + sy, 1, 1); }
+    for (const [sx, sy] of STARS) { const x = ((sx - Math.floor(cam * 0.03)) % 220 + 220) % 220; if (x < W && (frame + sx) % 140 > 4) ctx.fillRect(x, oy + sy, 1, 1); }
     // 月
-    const mx = Math.round(118 - cam * 0.04), my = oy + 26;
+    const mx = 118 - Math.floor(cam * 0.04), my = oy + 26;
     ctx.fillStyle = P[0];
     for (let y = -12; y <= 12; y++) { const w = Math.floor(Math.sqrt(144 - y * y)); ctx.fillRect(mx - w, my + y, w * 2, 1); }
     ctx.fillStyle = P[1];
     ctx.fillRect(mx - 5, my - 4, 4, 3); ctx.fillRect(mx + 3, my + 2, 3, 3); ctx.fillRect(mx - 2, my + 6, 2, 2);
     // 城のシルエット
     ctx.fillStyle = P[2];
+    const c3 = Math.floor(cam * 0.3), c6 = Math.floor(cam * 0.6);
     for (let x = 0; x < W; x++) {
-      const h = SKY[Math.floor(((x + cam * 0.3) % 320 + 320) % 320)];
+      const h = SKY[((x + c3) % 320 + 320) % 320];
       ctx.fillRect(x, oy + h, 1, 128 - h);
     }
     // 窓明かり
     ctx.fillStyle = P[1];
-    for (let x = 0; x < W; x++) { const wx = Math.floor(x + cam * 0.3); if (wx % 37 === 0) { const h = SKY[((wx % 320) + 320) % 320]; if (h < 80) ctx.fillRect(x, oy + h + 10, 1, 2); } }
+    for (let x = 0; x < W; x++) { const wx = x + c3; if (wx % 37 === 0) { const h = SKY[((wx % 320) + 320) % 320]; if (h < 80) ctx.fillRect(x, oy + h + 10, 1, 2); } }
     // 木々の手前シルエット
     ctx.fillStyle = P[3];
-    for (let x = 0; x < W; x++) { const wx = x + cam * 0.6; const h = 110 + Math.sin(wx * 0.11) * 4 + Math.sin(wx * 0.37) * 2; ctx.fillRect(x, oy + Math.round(h), 1, 128); }
+    for (let x = 0; x < W; x++) { const wx = x + c6; const h = 110 + Math.sin(wx * 0.11) * 4 + Math.sin(wx * 0.37) * 2; ctx.fillRect(x, oy + Math.round(h), 1, 128); }
   }
 
   function drawWorld() {
@@ -643,7 +653,7 @@
   }
 
   function drawTitle() {
-    cam = frame * 0.5;
+    cam = frame >> 1;
     drawBackdrop(HUD - 8);
     const P = pal();
     ctx.fillStyle = P[3]; ctx.fillRect(0, 0, W, 10); ctx.fillRect(0, 134, W, 10);
@@ -688,10 +698,13 @@
   function fit() {
     const area = document.getElementById("view");
     const r = area.getBoundingClientRect();
-    let s = Math.min(r.width / W, r.height / H);
-    if (s >= 2) s = Math.floor(s);
-    canvas.style.width = Math.floor(W * s) + "px";
-    canvas.style.height = Math.floor(H * s) + "px";
+    // 実際の画面ピクセル単位で整数倍にする（スマホの devicePixelRatio が 2.625 等でも
+    // ドットの太さが揃い、スクロール時に縞模様のチラつきが出ない）
+    const dpr = window.devicePixelRatio || 1;
+    const aw = r.width - 28, ah = r.height - 28; // 余白と枠の分を引く
+    const k = Math.max(1, Math.floor(Math.min((aw * dpr) / W, (ah * dpr) / H)));
+    canvas.style.width = (W * k) / dpr + "px";
+    canvas.style.height = (H * k) / dpr + "px";
   }
   addEventListener("resize", fit);
   addEventListener("orientationchange", () => setTimeout(fit, 200));
@@ -699,15 +712,19 @@
   // ================= ループ =================
   let last = 0, acc = 0;
   function loop(ts) {
-    const dt = Math.min(0.1, (ts - last) / 1000 || 0);
-    last = ts; acc += dt;
+    let dt = Math.min(0.1, (ts - last) / 1000 || 0);
+    last = ts;
+    // 画面の更新間隔の揺れで「1回の描画で0回/2回更新」が交互に起きるとカクつくので、1/60秒の倍数に吸着させる
+    const f60 = dt * 60, rf = Math.round(f60);
+    if (rf >= 1 && Math.abs(f60 - rf) < 0.2) dt = rf / 60;
+    acc += dt;
     let n = 0;
     while (acc >= 1 / 60 && n < 5) { update(); acc -= 1 / 60; n++; }
-    render();
+    if (n) render(); // 状態が変わったときだけ描く
     requestAnimationFrame(loop);
   }
   // デバッグ用フック（?debug=1）
-  window.MK = { get state() { return state; }, get player() { return player; }, get boss() { return boss; }, get cam() { return cam; }, newGame, keyHeld, warp(tx) { player.x = tx * T; player.y = 40; cam = clamp(player.x - 76, 0, MW * T - W); } };
+  window.MK = { get state() { return state; }, get player() { return player; }, get boss() { return boss; }, get cam() { return cam; }, newGame, keyHeld, warp(tx) { player.x = tx * T; player.y = 40; cam = clamp(Math.round(player.x) - 76, 0, MW * T - W); } };
 
   (async function boot() {
     await Sprites.loadOverrides();
