@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>MOONSHADE KEEP 月影の城</title>
+<meta name="theme-color" content="#0f380f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root { --d:#0f380f; --m:#306230; --l:#8bac0f; --x:#9bbc0f; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:#081c08; color:var(--l); font-family:system-ui,sans-serif; overflow:hidden;
+    user-select:none; -webkit-user-select:none; touch-action:none; overscroll-behavior:none; }
+  #app { position:fixed; inset:0; display:flex; flex-direction:column; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #view { flex:1; display:flex; align-items:center; justify-content:center; min-height:0; padding:8px; }
+  canvas { image-rendering:pixelated; image-rendering:crisp-edges; background:var(--d); border:4px solid #1c2c1c; border-radius:4px; box-shadow:0 0 0 2px #000, 0 8px 30px #0008; }
+  #bar { position:fixed; top:calc(6px + env(safe-area-inset-top)); right:calc(8px + env(safe-area-inset-right)); display:flex; gap:6px; z-index:5; }
+  #bar button { background:#1c2c1c; color:var(--l); border:1px solid var(--m); border-radius:6px; padding:4px 10px; font-size:12px; }
+  #help { position:fixed; bottom:6px; left:0; right:0; text-align:center; font-size:12px; opacity:.6; }
+  #pad { display:none; }
+  body.touch #help { display:none; }
+  body.touch #pad { display:block; position:relative; height:38vh; min-height:190px; flex:none; }
+  .btn { position:absolute; display:flex; align-items:center; justify-content:center; color:var(--x); font-weight:bold;
+    border-radius:50%; background:#2a3a2a; box-shadow:0 4px 0 #0a140a; font-size:18px; }
+  .btn.on { transform:translateY(3px); box-shadow:0 1px 0 #0a140a; background:#3c5a3c; }
+  #dpad { left:6%; top:50%; width:140px; height:140px; margin-top:-70px; border-radius:16px; background:none; box-shadow:none; }
+  #dpad::before, #dpad::after { content:""; position:absolute; background:#2a3a2a; border-radius:8px; box-shadow:0 4px 0 #0a140a; }
+  #dpad::before { left:46px; top:0; width:48px; height:140px; }
+  #dpad::after { left:0; top:46px; width:140px; height:48px; }
+  #dpad.on::before, #dpad.on::after { background:#3c5a3c; }
+  #dpad span { position:absolute; z-index:1; font-size:14px; color:var(--l); pointer-events:none; }
+  #bA { right:6%; top:50%; width:72px; height:72px; margin-top:-62px; }
+  #bB { right:calc(6% + 84px); top:50%; width:72px; height:72px; margin-top:-22px; }
+  #bStart, #bSel { bottom:10px; width:70px; height:26px; border-radius:13px; font-size:11px; left:50%; }
+  #bStart { margin-left:6px; } #bSel { margin-left:-76px; }
+  @media (orientation:landscape) {
+    body.touch #pad { position:fixed; inset:0; height:auto; pointer-events:none; }
+    body.touch #pad .btn { pointer-events:auto; opacity:.75; }
+    #dpad { left:calc(3% + env(safe-area-inset-left)); top:auto; bottom:30px; margin-top:0; }
+    #bA { top:auto; bottom:90px; right:calc(3% + env(safe-area-inset-right)); margin:0; }
+    #bB { top:auto; bottom:40px; right:calc(3% + 84px + env(safe-area-inset-right)); margin:0; }
+    #bStart, #bSel { bottom:8px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="view"><canvas id="screen" width="160" height="144"></canvas></div>
+  <div id="pad">
+    <div class="btn" id="dpad" data-btn="dpad"><span style="left:10px;top:60px">◀</span><span style="right:10px;top:60px">▶</span><span style="left:63px;top:8px">▲</span><span style="left:63px;bottom:8px">▼</span></div>
+    <div class="btn" id="bB" data-btn="attack">B</div>
+    <div class="btn" id="bA" data-btn="jump">A</div>
+    <div class="btn" id="bSel" data-btn="select">SELECT</div>
+    <div class="btn" id="bStart" data-btn="start">START</div>
+  </div>
+</div>
+<div id="bar"><button id="install" hidden>インストール</button><button id="fs">全画面</button></div>
+<div id="help">←→ 移動 ／ Z・Space ジャンプ ／ X 攻撃 ／ Enter スタート・ポーズ ／ P 色変更 ／ M 音ON/OFF ／ ゲームパッド対応</div>
+<script src="js/sprites.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/level.js"></script>
+<script src="js/game.js"></script>
+<script>
+  // PWA: オフライン対応 + インストールボタン
+  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  let deferred = null;
+  const ib = document.getElementById("install");
+  addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferred = e; ib.hidden = false; });
+  ib.onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; ib.hidden = true; };
+  document.getElementById("fs").onclick = () => {
+    const el = document.documentElement;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (el.requestFullscreen) el.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape").catch(() => {})).catch(() => {});
+  };
+  if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) document.getElementById("fs").hidden = true;
+</script>
+</body>
+</html>
