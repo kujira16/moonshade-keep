@@ -1,5 +1,5 @@
 // オフラインで遊べるようにファイルをキャッシュ。更新したら VERSION を上げる
-const VERSION = "mk-v1";
+const VERSION = "mk-v2";
 const FILES = ["./", "index.html", "manifest.webmanifest", "js/sprites.js", "js/audio.js", "js/level.js", "js/game.js",
   "icons/icon-192.png", "icons/icon-512.png", "assets/overrides.json"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES))); self.skipWaiting(); });

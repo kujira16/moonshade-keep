@@ -215,12 +215,12 @@
   function spark(x, y, n = 1, spread = 0) {
     for (let i = 0; i < n; i++) parts.push({ kind: "spark", x: x + (Math.random() - 0.5) * spread, y: y + (Math.random() - 0.5) * spread, t: -i * 3 });
   }
-  function hurtPlayer(dmg, fromX) {
+  function hurtPlayer(dmg, fromX, bounce = 1.8) {
     if (player.inv > 0 || player.dead) return;
     player.hp -= dmg;
     player.inv = 70; player.hurt = 16;
     player.face = fromX > player.x + 4 ? 1 : -1;
-    player.vx = -player.face * 1.2; player.vy = -2.2; player.atk = 0;
+    player.vx = -player.face * 1.0; player.vy = -bounce; player.atk = 0;
     shake = 6; Sound.play("hurt");
     if (player.hp <= 0) killPlayer();
   }
@@ -253,22 +253,23 @@
     if (p.atk > 0) { p.atk++; if (p.atk > 22) p.atk = 0; }
 
     // 横移動（地上攻撃中は停止）
+    // 加速・減速つきの横移動（なめらかに動き出して止まる）
+    const MAXV = 0.85, ACC = p.onGround ? 0.07 : 0.05, DEC = p.onGround ? 0.09 : 0.03;
     if (ctl) {
       const dir = (held.right ? 1 : 0) - (held.left ? 1 : 0);
-      if (p.atk && !p.atkAir) p.vx = 0;
-      else {
-        p.vx = dir * 1.1;
-        if (dir && !p.atk) p.face = dir;
-      }
+      const target = p.atk && !p.atkAir ? 0 : dir * MAXV;
+      if (dir && !p.atk) p.face = dir;
+      const rate = target === 0 || Math.sign(target) !== Math.sign(p.vx) ? DEC + (target ? ACC : 0) : ACC;
+      p.vx += clamp(target - p.vx, -rate, rate);
     }
     // ジャンプ（コヨーテタイム + 先行入力 + 可変ジャンプ）
     p.coyote = p.onGround ? 6 : Math.max(0, p.coyote - 1);
     p.jumpBuf = pressed.jump ? 7 : Math.max(0, p.jumpBuf - 1);
     if (ctl && p.jumpBuf && p.coyote && !(p.atk && !p.atkAir)) {
-      p.vy = -3.8; p.coyote = 0; p.jumpBuf = 0; Sound.play("jump");
+      p.vy = -3.15; p.coyote = 0; p.jumpBuf = 0; Sound.play("jump");
     }
-    if (!held.jump && p.vy < -1.4 && ctl) p.vy = -1.4;
-    p.vy = Math.min(p.vy + 0.19, 4);
+    if (!held.jump && p.vy < -1.0 && ctl) p.vy += (-1.0 - p.vy) * 0.35; // 離すとふわっと減速
+    p.vy = Math.min(p.vy + 0.13, 3);
     const wasGround = p.onGround;
     moveBody(p);
     if (p.onGround && !wasGround && p.atkAir) p.atkAir = false;
@@ -280,9 +281,9 @@
 
     // トゲ
     const c0 = Math.floor((p.x + 1) / T), c1 = Math.floor((p.x + p.w - 2) / T), r = Math.floor((p.y + p.h - 1) / T);
-    for (let c = c0; c <= c1; c++) if (tileAt(c, r) === "^" && p.y + p.h - 1 > r * T + 3) hurtPlayer(2, p.x + 4 - p.face * 8);
+    for (let c = c0; c <= c1; c++) if (tileAt(c, r) === "^" && p.y + p.h - 1 > r * T + 3) hurtPlayer(2, p.x + 4 - p.face * 8, 3); // トゲは高く跳ね上げて抜け出しやすく
 
-    p.anim = p.vx && p.onGround ? p.anim + 1 : 0;
+    p.anim = Math.abs(p.vx) > 0.1 && p.onGround ? p.anim + Math.abs(p.vx) / 0.85 : 0;
   }
 
   function updateEnts() {
@@ -488,7 +489,7 @@
     for (const q of parts) q.t++;
     parts = parts.filter((q) => q.t < 15);
 
-    if (!bossLock) cam += (clamp(player.x - 76, 0, MW * T - W) - cam) * 0.25;
+    if (!bossLock) cam += (clamp(player.x - 76, 0, MW * T - W) - cam) * 0.12;
     else cam += (LV.arenaX * T - cam) * 0.1;
 
     if (state === "dying" && stateT > 100) {
@@ -610,7 +611,7 @@
     let name = "player_idle", f = 0;
     if (p.atk) name = p.onGround ? "player_attack" : "player_attack_air";
     else if (!p.onGround) name = "player_jump";
-    else if (p.vx) { name = "player_walk"; f = Math.floor(p.anim / 6); }
+    else if (Math.abs(p.vx) > 0.1) { name = "player_walk"; f = Math.floor(p.anim / 8); }
     spr(name, f, sx, sy, flip);
     // ムチ（鎖を点で描く）
     if (p.atk) {
