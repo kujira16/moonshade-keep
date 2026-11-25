@@ -560,6 +560,22 @@
     for (let x = 0; x < W; x++) { const wx = x + c6; const h = 110 + Math.sin(wx * 0.11) * 4 + Math.sin(wx * 0.37) * 2; ctx.fillRect(x, oy + Math.round(h), 1, 128); }
   }
 
+  function drawTile(name, tx, ty) {
+    const { img, w, h } = Sprites.get(name);
+    const x = tx * T, y = ty * T;
+    if (w !== 2 * T || h !== 2 * T) {
+      ctx.drawImage(img, x, y);
+      return;
+    }
+
+    let sx = (tx & 1) * T, sy = (ty & 1) * T, sh = T;
+    // 1マスの地形や柱は、マップ上の偶奇にかかわらず絵の有効部分を使う。
+    if (name === "t_brick_top" || name === "t_ledge") sy = 0;
+    if (name === "t_pillar") sx = T / 2;
+    if (name === "t_spikes") { sy = T / 2; sh = h - sy; }
+    ctx.drawImage(img, sx, sy, T, sh, x, y, T, T);
+  }
+
   function drawWorld() {
     const oy = HUD;
     const sx = shake ? Math.round((Math.random() - 0.5) * 3) : 0;
@@ -571,17 +587,17 @@
     ctx.translate(-cx, oy);
     for (let y = 0; y < MH; y++) for (let x = c0; x <= c1 && x < MW; x++) {
       const b = bg[y][x];
-      if (b === "b") spr("t_back", 0, x * T, y * T);
-      else if (b === "I") spr("t_pillar", 0, x * T, y * T);
+      if (b === "b") drawTile("t_back", x, y);
+      else if (b === "I") drawTile("t_pillar", x, y);
     }
     for (const [x, y] of windows) if (x * T > cx - 16 && x * T < cx + W) spr("t_window", 0, x * T, y * T);
     for (let y = 0; y < MH; y++) for (let x = c0; x <= c1 && x < MW; x++) {
       const f = fg[y][x];
-      if (f === "#") spr(y > 0 && fg[y - 1][x] !== "#" ? "t_brick_top" : "t_brick", 0, x * T, y * T);
-      else if (f === "=") spr("t_ledge", 0, x * T, y * T);
-      else if (f === "^") spr("t_spikes", 0, x * T, y * T);
+      if (f === "#") drawTile(y > 0 && fg[y - 1][x] !== "#" ? "t_brick_top" : "t_brick", x, y);
+      else if (f === "=") drawTile("t_ledge", x, y);
+      else if (f === "^") drawTile("t_spikes", x, y);
     }
-    if (gateClosed) for (let y = 2; y <= 13; y++) for (const x of [LV.arenaX - 1, LV.arenaX]) spr(y % 2 ? "t_pillar" : "t_brick", 0, x * T, y * T);
+    if (gateClosed) for (let y = 2; y <= 13; y++) for (const x of [LV.arenaX - 1, LV.arenaX]) drawTile(y % 2 ? "t_pillar" : "t_brick", x, y);
 
     // 敵・アイテム
     for (const e of ents) {

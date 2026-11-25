@@ -431,6 +431,8 @@
     pocket: ["#e0e0d0", "#a8a898", "#585850", "#181810"],
     moon: ["#e8e0f8", "#9890c0", "#484070", "#100820"],
   };
+  // すでに緑4階調で保存されたPNGは、元の階調番号をそのまま使う。
+  const greenShades = new Map(PALETTES.green.map((hex, i) => [parseInt(hex.slice(1), 16), i + 1]));
 
   // 文字列 -> 0..4 の数値配列
   function parse(frame) {
@@ -478,8 +480,10 @@
       for (let y = 0; y < c.height; y++) for (let x = 0; x < fw; x++) {
         const i = (y * c.width + k * fw + x) * 4;
         if (d[i + 3] < 128) { px.push(0); continue; }
-        const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        px.push(lum > 192 ? 1 : lum > 128 ? 2 : lum > 64 ? 3 : 4);
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const shade = greenShades.get((r << 16) | (g << 8) | b);
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        px.push(shade ?? (lum > 192 ? 1 : lum > 128 ? 2 : lum > 64 ? 3 : 4));
       }
       frames.push({ w: fw, h: c.height, px });
     }

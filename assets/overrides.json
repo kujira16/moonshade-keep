@@ -1,4 +1,29 @@
 {
   "_help": "差し替えたいスプライト名: 1フレームの横幅(px) を書き、assets/<名前>.png を置く。例: \"skeleton\": 16",
-  "sprites": {}
+  "sprites": {
+    "player_idle": 16,
+    "player_walk": 16,
+    "player_jump": 16,
+    "player_attack": 16,
+    "player_attack_air": 16,
+    "bat": 16,
+    "bat_hang": 16,
+    "skeleton": 16,
+    "ghost": 16,
+    "boss_skull": 16,
+    "boss_wing": 16,
+    "candle": 8,
+    "heart": 8,
+    "gem": 8,
+    "bone": 8,
+    "fireball": 8,
+    "orb": 8,
+    "t_brick": 16,
+    "t_brick_top": 16,
+    "t_ledge": 16,
+    "t_spikes": 16,
+    "t_back": 16,
+    "t_pillar": 16,
+    "t_window": 16
+  }
 }

@@ -38,20 +38,26 @@ assets/overrides.json 画像差し替えの設定
 ```
 
 ## AI生成の絵に差し替える方法
-今のドット絵は `js/sprites.js` に文字（`.`=透明, `1`〜`4`=明→暗）で描いてあります。画像生成AIの絵に差し替えるには：
+同梱の PNG 24 種は起動時に `assets/overrides.json` から読み込まれます。差し替えがない絵は `js/sprites.js` のドット絵を使います。
 
-1. 画像生成AIに、例えば次のように頼む  
-   「16x16 pixel art sprite sheet, 4 frames in a row, side view, gothic vampire hunter with wide-brim hat and scarf, game boy style, 4 shades of green, transparent background」
-2. 出来た画像を**ドット数ちょうど**に縮小（例：4フレーム × 16px = 64×16px）。縮小は「ニアレストネイバー」で。背景は透明に。
-3. `assets/<スプライト名>.png` として保存（例：`assets/player_walk.png`）
-4. `assets/overrides.json` に1フレームの幅を書く：
-   ```json
-   { "sprites": { "player_walk": 16, "skeleton": 16, "boss_skull": 16 } }
-   ```
-5. 再読み込み。色は明るさで自動的に4階調へ変換されるので、フルカラーの絵でもゲームボーイ風になります。
+同梱素材は組み込みの画像生成機能で制作しました。主人公の立ち絵には騎士の参照画像を使い、各ポーズは生成した立ち絵から展開しています。
 
-差し替えられる名前：`player_idle` `player_walk`(4コマ) `player_jump` `player_attack` `player_attack_air` `bat`(2) `bat_hang` `skeleton`(2) `ghost`(2) `candle`(2) `heart` `gem` `bone`(2) `fireball`(2) `boss_skull` `boss_wing`(2) `orb`(2) `t_brick` `t_brick_top` `t_ledge` `t_spikes` `t_back` `t_pillar`（以上8×8タイル）`t_window`(16×24)。
-サイズを変えると当たり判定とずれるので、最初は同じサイズで作るのがおすすめです。
+再生成する場合は `OPENAI_API_KEY` を環境変数に設定し、リポジトリのルートで実行します。
+
+```sh
+python -m pip install openai pillow
+python tools/gen_sprites.py --only player_idle,player_walk
+python tools/gen_sprites.py --all
+python tools/gen_sprites.py --all --reprocess
+```
+
+- 主人公の立ち絵は `docs/reference/knight.png` を参照します。ほかのポーズを個別に生成する場合は、先に `player_idle` を生成してください。
+- `--reprocess` は `assets/raw/<名前>_01.png` などの保存済み原画を使います。API には接続しません。原画フォルダは Git の管理対象外です。
+- 既定モデルは `gpt-image-1` です。環境変数 `IMAGE_MODEL` または `--model` で、透過 PNG に対応するモデルに変更できます。
+- `tools/sprite_prompts.json` で対象名、サイズ、ポーズ、明度しきい値を調整できます。出力は BOX で縮小し、4 階調と完全透過に揃えます。複数フレームは PNG 内で横に並びます。
+- 出力時に `assets/overrides.json` と `sw.js` のキャッシュ設定を更新します。仕上がりは [8倍拡大の一覧](assets/preview/_sheet.png) で確認できます。
+
+手動で差し替える場合は `assets/<スプライト名>.png` を置き、`assets/overrides.json` の `sprites` に 1 フレームの幅を指定します。指定の緑4色は階調を保持し、ほかの色は明度で変換されます。城の壁は 16×16 の絵からマップ座標に対応する 8×8 を表示します。足場、トゲ、柱は 1 マスに収まる部分を使い、アーチ窓は 16×24 の全体を背景に表示します。
 
 ## ステージを作り替える
 `tools/make_level.py` を編集して `python3 tools/make_level.py` を実行すると `js/level.js` が更新されます（直接 level.js を書き換えてもOK）。
