@@ -62,3 +62,6 @@ python tools/gen_sprites.py --all --reprocess
 ## ステージを作り替える
 `tools/make_level.py` を編集して `python3 tools/make_level.py` を実行すると `js/level.js` が更新されます（直接 level.js を書き換えてもOK）。
 記号：`#`壁 `=`乗れる足場 `^`トゲ `b`城の奥壁 `I`柱 `W`窓 `P`開始位置 `C`燭台 `B`コウモリ `S`ガイコツ `G`ゴースト `K`ボス `R`チェックポイント
+
+### 生成した絵を見やすくする後処理
+`python3 tools/polish_sprites.py` を実行すると、`assets/source/`（生成直後の絵）から、奥の壁を暗く・床や壁を明るく・キャラを明るく縁取りした絵を `assets/` に書き出します。絵を作り直したら、そのあとにこれを実行してください。

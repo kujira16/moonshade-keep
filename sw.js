@@ -1,5 +1,5 @@
 // オフラインで遊べるようにファイルをキャッシュ。更新したら VERSION を上げる
-const VERSION = "mk-v3-sprites-71160b6fccef";
+const VERSION = "mk-v4-polished";
 const FILES = ["./", "index.html", "manifest.webmanifest", "js/sprites.js", "js/audio.js", "js/level.js", "js/game.js",
   "icons/icon-192.png", "icons/icon-512.png", "assets/overrides.json",
   './assets/player_idle.png',
