@@ -6,28 +6,36 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from contextlib import ExitStack
 from io import BytesIO
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from shutil import copyfile
 
-from PIL import Image, ImageDraw
+import numpy as np
+from PIL import Image, ImageDraw, PngImagePlugin
+
+if __package__:
+    from . import sprite_grid as grid
+else:
+    import sprite_grid as grid
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 RAW = ASSETS / "raw"
+SOURCE = ASSETS / "source"
 PREVIEW = ASSETS / "preview"
 PALETTE = ((155, 188, 15), (139, 172, 15), (48, 98, 48), (15, 56, 15))
 COLORS = {(0, 0, 0, 0)} | {(*color, 255) for color in PALETTE}
 PREVIEW_BG = (35, 76, 35)
-LEVELS = (151, 115, 58)
+MIN_SCORE = .78
 
 
 def raw_path(name, index):
-    return RAW / f"{name}_{index + 1:02}.png"
+    return RAW / name / f"{index:02}.png"
 
 
 def read_image(path):
@@ -42,11 +50,12 @@ def alpha_bounds(image):
     return bounds
 
 
-def request_image(client, model, prompt, references):
+def request_image(client, model, prompt, references, size):
     options = {
         "model": model,
         "prompt": prompt,
-        "size": "1024x1024",
+        "size": size,
+        "quality": "high",
         "background": "transparent",
         "output_format": "png",
     }
@@ -69,96 +78,135 @@ def request_image(client, model, prompt, references):
             time.sleep(2 ** attempt)
 
 
-def generate_sources(client, model, name, spec, common):
+def read_selection(name):
+    selection = RAW / name / "selection.json"
+    return json.loads(selection.read_text(encoding="utf-8")) if selection.exists() else {}
+
+
+def make_prompt(name, spec, common, retry):
     width, height = spec["size"]
-    reference = ROOT / spec["reference"] if "reference" in spec else None
-    if reference is not None and not reference.is_file():
-        raise FileNotFoundError(reference.relative_to(ROOT))
-    backdrop = ("Only the texture, opaque edge to edge." if spec.get("texture")
-                else "Isolate the silhouette on a genuinely transparent background.")
-    sources = []
-    with TemporaryDirectory(dir=RAW) as temporary:
-        first = Path(temporary) / "first_frame.png"
-        for index, pose in enumerate(spec["frames"]):
-            references = [first] if index and spec.get("match_frames") else []
-            if reference is not None:
-                references.append(reference)
-            prompt = " ".join((common.format(width=width, height=height), backdrop, pose))
-            source = request_image(client, model, prompt, references)
-            if index == 0 and spec.get("match_frames"):
-                source.save(first)
-            sources.append(source)
-    return sources
+    frames = spec["frames"]
+    cols = width * len(frames)
+    canvas = (1536, 1024) if len(frames) > 1 else (1024, 1024)
+    prompt = common.format(cols=cols, rows=height, pitch_x=canvas[0] / cols,
+                           pitch_y=canvas[1] / height)
+    prompt += " Opaque art edge to edge." if spec.get("texture") else " Transparent outside the subject."
+    if name.startswith("player_"):
+        prompt += (" Right-facing knight, keep bright hair/ahoge (rows 1–6), one dark eye,"
+                   " bright round silver armor (rows 7–10), a dark tunic and belt, and two-pixel-wide"
+                   " silver boots ending at row 15. Keep body centered in columns 4–11.")
+    prompt += f" Draw exactly {len(frames)} frame(s) of {width}x{height} cells, left to right."
+    prompt += " " + " ".join(f"Frame {i}: {pose}" for i, pose in enumerate(frames, 1))
+    if retry:
+        prompt += " Use larger solid clusters, fewer one-cell details, and brighter armor or lit faces."
+    return prompt, "x".join(map(str, canvas))
 
 
-def downsample(source, spec):
+def selected_idle():
+    index = read_selection("player_idle").get("candidate")
+    if index is None or not raw_path("player_idle", index).exists():
+        raise FileNotFoundError("Generate or select player_idle before generating poses that reference it")
+    return raw_path("player_idle", index)
+
+
+def evaluate(image, name, spec):
     width, height = spec["size"]
-    cropped = source.crop(alpha_bounds(source))
-    if spec.get("texture"):
-        scaled = cropped.resize((width, height), Image.Resampling.BOX)
-        background = Image.new("RGBA", (width, height), (*PALETTE[3], 255))
-        return Image.alpha_composite(background, scaled)
-
-    target_width, target_height = spec.get("content_size", (width, height))
-    scale = min(target_width / cropped.width, target_height / cropped.height)
-    size = (target_width, target_height) if spec.get("fill_content") else (
-        max(1, round(cropped.width * scale)), max(1, round(cropped.height * scale))
-    )
-    scaled = cropped.resize(size, Image.Resampling.BOX)
-    bounds = alpha_bounds(scaled)
-    x = width - bounds[2] if spec.get("align") == "right" else (width - size[0]) // 2
-    anchor = spec.get("anchor", "bottom")
-    y = {
-        "top": -bounds[1],
-        "center": (height - size[1]) // 2,
-        "bottom": height - bounds[3],
-    }[anchor]
-    result = Image.new("RGBA", (width, height))
-    result.paste(scaled, (x, y))
-    return result
+    n = len(spec["frames"])
+    allowed = tuple(index + 1 for index in spec.get("shades", range(4)))
+    query, agreement = grid.read_sheet(image, width * n, height, allowed, spec.get("texture", False))
+    if not agreement:
+        return None, {}
+    frames = np.array([grid.finish(query[:, i * width:(i + 1) * width], name, spec) for i in range(n)])
+    parts = grid.score_frames(frames, agreement, name)
+    if not parts:
+        return None, {}
+    png = grid.to_png(frames)
+    return match_walk_head(png) if name == "player_walk" else png, parts
 
 
-def quantize(source, spec):
-    image = downsample(source, spec)
-    width, height = image.size
-    pixels = image.load()
-    levels = spec.get("levels", LEVELS)
-    shades = spec.get("shades", range(4))
-    indices = {}
-    for y in range(height):
-        for x in range(width):
-            red, green, blue, alpha = pixels[x, y]
-            if alpha >= 128:
-                luma = 0.299 * red + 0.587 * green + 0.114 * blue
-                index = sum(luma < level for level in levels)
-                indices[x, y] = min(shades, key=lambda shade: abs(index - shade))
-
-    result = Image.new("RGBA", image.size)
-    output = result.load()
-    outline = spec.get("outline", not spec.get("texture"))
-    for (x, y), index in indices.items():
-        neighbors = ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1))
-        if outline and index < 2 and any(
-            0 <= nx < width and 0 <= ny < height and (nx, ny) not in indices
-            for nx, ny in neighbors
-        ):
-            index = 3
-        output[x, y] = (*PALETTE[index], 255)
-    return result
+def match_walk_head(walk):
+    idle_path = SOURCE / "player_idle.png"
+    if idle_path.is_file():
+        idle = read_image(idle_path)
+        head = idle.crop((0, 0, idle.width, 7))
+        for x in range(0, walk.width, idle.width):
+            walk.paste(head, (x, 0))
+    return walk
 
 
-def save_sprite(name, spec, sources):
+def mean_score(parts):
+    return sum(parts.values()) / len(parts) if parts else 0
+
+
+def generate_candidates(client, model, name, spec, common):
+    refs = []
+    if spec.get("reference") == "idle":
+        refs = [selected_idle()]
+    elif spec.get("reference"):
+        refs = [ROOT / spec["reference"]]
+        if not refs[0].is_file():
+            raise FileNotFoundError(refs[0])
+    candidates = []
+    for retry in (False, True):
+        prompt, size = make_prompt(name, spec, common, retry)
+        for _ in range(4):
+            image = request_image(client, model, prompt, refs, size)
+            candidates.append((image, *evaluate(image, name, spec)))
+        if max(mean_score(parts) for _, _, parts in candidates) >= MIN_SCORE:
+            break
+    for index, (image, _, _) in enumerate(candidates, 1):
+        image.save(raw_path(name, index))
+    for index in range(len(candidates) + 1, 9):
+        raw_path(name, index).unlink(missing_ok=True)
+    return [(i, image, parts) for i, (_, image, parts) in enumerate(candidates, 1)]
+
+
+def load_candidates(name, spec):
+    choices = [(i, *evaluate(read_image(raw_path(name, i)), name, spec))
+               for i in range(1, 9) if raw_path(name, i).is_file()]
+    if not choices:
+        raise FileNotFoundError(f"No candidate sheets in assets/raw/{name}/")
+    return choices
+
+
+def saved_preview_candidates(name):
+    path = PREVIEW / "candidates" / f"{name}.png"
+    if not path.is_file():
+        return []
+    with Image.open(path) as preview:
+        records = json.loads(preview.info.get("sprite_candidates", "[]"))
+    return [(record["index"], Image.open(BytesIO(base64.b64decode(record["png"]))).convert("RGBA")
+             if record["png"] else None, record["scores"]) for record in records]
+
+
+def save_candidates(name, spec, candidates, selected):
     width, height = spec["size"]
-    frames = [quantize(source, spec) for source in sources]
-    sheet = Image.new("RGBA", (width * len(spec["frames"]), height))
-    if len(frames) != len(spec["frames"]):
-        raise ValueError("Unexpected frame count")
-    for index, frame in enumerate(frames):
-        if frame.getbbox() is None:
-            raise ValueError(f"Frame {index + 1} is empty after resizing")
-        sheet.paste(frame, (index * width, 0))
-    validate_sprite(sheet, spec)
-    sheet.save(ASSETS / f"{name}.png")
+    n = len(spec["frames"])
+    scale, padding = 4, 10
+    card_w, card_h = max(width * n * scale, 128) + 2 * padding, height * scale + 44
+    columns = 2
+    rows = (len(candidates) + columns - 1) // columns
+    board = Image.new("RGB", (card_w * columns, card_h * rows), (15, 56, 15))
+    draw = ImageDraw.Draw(board)
+    records = []
+    for slot, (index, png, parts) in enumerate(candidates):
+        x, y = (slot % columns) * card_w + padding, (slot // columns) * card_h + padding
+        marker = " SELECTED" if index == selected else ""
+        score = f"{sum(parts.values()):.2f}/{len(parts)}" if parts else "invalid"
+        draw.text((x, y), f"{index:02d}  {score}{marker}", fill=(205, 224, 165))
+        buffer = BytesIO()
+        if png is not None:
+            png.save(buffer, "PNG")
+        records.append({"index": index, "scores": parts,
+                        "png": base64.b64encode(buffer.getvalue()).decode("ascii")})
+        if png is None:
+            continue
+        enlarged = png.resize((png.width * scale, png.height * scale), Image.Resampling.NEAREST)
+        board.paste(PREVIEW_BG, (x, y + 14, x + enlarged.width, y + 14 + enlarged.height))
+        board.paste(enlarged, (x, y + 14), enlarged)
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("sprite_candidates", json.dumps(records, separators=(",", ":")), zip=True)
+    board.save(PREVIEW / "candidates" / f"{name}.png", pnginfo=metadata)
 
 
 def validate_sprite(sheet, spec):
@@ -171,6 +219,9 @@ def validate_sprite(sheet, spec):
     counts = sheet.getcolors(maxcolors=len(allowed))
     if counts is None or any(color not in allowed for _, color in counts):
         raise ValueError("Sheet includes pixels outside the specified palette")
+    for x in range(0, sheet.width, width):
+        if sheet.crop((x, 0, x + width, height)).getbbox() is None:
+            raise ValueError("Sheet contains an empty frame")
 
 
 def update_previews(sprites):
@@ -205,6 +256,51 @@ def update_previews(sprites):
         draw.text((x, y), name, fill=(205, 224, 165))
         overview.paste(preview, (x, y + label_height))
     overview.save(PREVIEW / "_sheet.png")
+
+
+def remember_baseline(sprites):
+    baseline = RAW / "_baseline"
+    baseline.mkdir(exist_ok=True)
+    for name in sprites:
+        source = SOURCE / f"{name}.png"
+        backup = baseline / source.name
+        if source.is_file() and not backup.exists():
+            copyfile(source, backup)
+
+
+def update_comparison(sprites):
+    panels = []
+    for folder, label in ((RAW / "_baseline", "BEFORE"), (SOURCE, "AFTER")):
+        items = []
+        for name, spec in sprites.items():
+            path = folder / f"{name}.png"
+            if not path.is_file():
+                continue
+            sprite = read_image(path)
+            validate_sprite(sprite, spec)
+            items.append((name, sprite.resize((sprite.width * 8, sprite.height * 8), Image.Resampling.NEAREST)))
+        if not items:
+            return
+        positions = []
+        x, y, row_h = 12, 38, 0
+        for name, image in items:
+            if x + image.width + 12 > 1120:
+                x, y, row_h = 12, y + row_h + 14, 0
+            positions.append((name, image, x, y))
+            x += image.width + 12
+            row_h = max(row_h, image.height + 16)
+        panel = Image.new("RGB", (1120, y + row_h + 20), (15, 56, 15))
+        draw = ImageDraw.Draw(panel)
+        draw.text((12, 12), label, fill=(205, 224, 165))
+        for name, image, x, y in positions:
+            draw.text((x, y), name, fill=(205, 224, 165))
+            panel.paste(PREVIEW_BG, (x, y + 16, x + image.width, y + 16 + image.height))
+            panel.paste(image, (x, y + 16), image)
+        panels.append(panel)
+    output = Image.new("RGB", (1120, sum(panel.height for panel in panels)), (15, 56, 15))
+    output.paste(panels[0], (0, 0))
+    output.paste(panels[1], (0, panels[0].height))
+    output.save(PREVIEW / "compare.png")
 
 
 def update_overrides(written):
@@ -258,50 +354,98 @@ def update_service_worker(written):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    selection = parser.add_mutually_exclusive_group(required=True)
+    selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--all", action="store_true")
     selection.add_argument("--only", help="Comma-separated sprite names")
-    parser.add_argument("--reprocess", action="store_true", help="Process existing raw PNGs offline")
+    parser.add_argument("--reprocess", action="store_true", help="Score and finish existing raw candidate sheets offline")
+    parser.add_argument("--pick", metavar="NAME=INDEX", action="append", default=[],
+                        help="Select a saved candidate (number 1-8) offline")
     parser.add_argument("--model", default=os.getenv("IMAGE_MODEL", "gpt-image-1"))
     args = parser.parse_args()
 
     config = json.loads(Path(__file__).with_name("sprite_prompts.json").read_text(encoding="utf-8"))
     sprites = config["sprites"]
-    requested = set(sprites) if args.all else {name.strip() for name in args.only.split(",")}
+    picks = {}
+    for pick in args.pick:
+        name, _, number = pick.partition("=")
+        if not re.fullmatch("[1-8]", number):
+            parser.error("--pick requires NAME=INDEX with a candidate number 1–8")
+        picks[name] = int(number)
+    if not (args.all or args.only or picks):
+        parser.error("Select sprites with --all, --only, or --pick")
+    requested = set(sprites) if args.all else set(picks)
+    if args.only:
+        requested.update(name.strip() for name in args.only.split(","))
     if unknown := requested - sprites.keys():
         parser.error("Unknown sprites: " + ", ".join(sorted(unknown)))
+    offline = args.reprocess or bool(picks)
     client = None
-    if not args.reprocess:
+    if not offline:
         if not os.getenv("OPENAI_API_KEY"):
             parser.error("Set OPENAI_API_KEY to generate assets, or use --reprocess.")
         from openai import OpenAI
         client = OpenAI(max_retries=0)
 
     RAW.mkdir(parents=True, exist_ok=True)
-    PREVIEW.mkdir(parents=True, exist_ok=True)
+    SOURCE.mkdir(parents=True, exist_ok=True)
+    (PREVIEW / "candidates").mkdir(parents=True, exist_ok=True)
+    remember_baseline(sprites)
     failed = []
     written = {}
     for name, spec in sprites.items():
         if name not in requested:
             continue
         try:
-            if args.reprocess:
-                sources = [read_image(raw_path(name, i)) for i in range(len(spec["frames"]))]
+            folder = RAW / name
+            folder.mkdir(exist_ok=True)
+            if name in picks and not any(raw_path(name, i).is_file() for i in range(1, 9)):
+                candidates = saved_preview_candidates(name)
+                if name == "player_walk":
+                    for _, png, _ in candidates:
+                        if png is not None:
+                            match_walk_head(png)
+            elif offline:
+                candidates = load_candidates(name, spec)
             else:
-                sources = generate_sources(client, args.model, name, spec, config["common"])
-            save_sprite(name, spec, sources)
-            if not args.reprocess:
-                for index, source in enumerate(sources):
-                    source.save(raw_path(name, index))
+                candidates = generate_candidates(client, args.model, name, spec, config["common"])
+            if not candidates:
+                raise FileNotFoundError(f"No saved candidates for {name}")
+            previous = read_selection(name) if offline else {}
+            manual = picks.get(name, previous.get("manual"))
+            if manual is None:
+                selected = max(candidates, key=lambda option: mean_score(option[2]))
+            else:
+                selected = next((option for option in candidates if option[0] == manual), None)
+                if selected is None:
+                    raise ValueError(f"Candidate {manual} does not exist")
+            index, png, scores = selected
+            save_candidates(name, spec, candidates, index)
+            if png is None:
+                raise ValueError(f"Candidate {index} has an empty frame")
+            validate_sprite(png, spec)
+            png.save(SOURCE / f"{name}.png")
+            (folder / "selection.json").write_text(
+                json.dumps({"candidate": index, "manual": manual, "scores": scores}, indent=2) + "\n",
+                encoding="utf-8")
             written[name] = spec["size"][0]
-            print(f"Saved assets/{name}.png")
+            print(f"Selected {name} #{index} ({sum(scores.values()):.2f}/{len(scores)})")
         except Exception as error:
             failed.append(name)
             print(f"Skipped {name}: {error}", file=sys.stderr)
 
+    if "player_idle" in written and "player_walk" not in written:
+        walk_path = SOURCE / "player_walk.png"
+        if walk_path.is_file():
+            match_walk_head(read_image(walk_path)).save(walk_path)
+            written["player_walk"] = sprites["player_walk"]["size"][0]
+    if written:
+        process = subprocess.run([sys.executable, str(ROOT / "tools/polish_sprites.py"), "--only", *written])
+        if process.returncode:
+            return process.returncode
     update_overrides(written)
     update_service_worker(written)
     update_previews(sprites)
+    update_comparison(sprites)
     if failed:
         print("Failed sprites: " + ", ".join(failed), file=sys.stderr)
     return int(bool(failed))

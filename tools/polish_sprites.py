@@ -8,7 +8,9 @@ gen_sprites.py で作り直したら、その後にこれを実行する。
 - 乗れる壁・足場：明るくする
 - キャラ・敵・アイテム：1段明るくし、外側に1pxの縁取りを付けて太く見せる
 """
-import os, shutil
+import argparse
+import os
+import shutil
 from PIL import Image
 
 PAL = [(0x9b, 0xbc, 0x0f), (0x8b, 0xac, 0x0f), (0x30, 0x62, 0x30), (0x0f, 0x38, 0x0f)]
@@ -21,7 +23,7 @@ SRC = os.path.join(ASSETS, "source")
 BACK = {1: 3, 2: 3, 3: 4, 4: 3}      # 奥の壁：地を一番暗く、目地をうっすら
 PILLAR = {1: 3, 2: 3, 3: 3, 4: 4}
 SOLID = {1: 1, 2: 1, 3: 2, 4: 3}     # 乗れる壁・足場：1段明るく
-ACTOR = {1: 1, 2: 1, 3: 2, 4: 4}     # キャラ：1段明るく、目や線(4)はそのまま
+ACTOR = {1: 1, 2: 2, 3: 2, 4: 4}     # 髪と鎧の明るさを区別し、中間色だけ明るく
 OUTLINE = 3                          # キャラの外側に付ける縁の色
 
 RULES = {
@@ -80,11 +82,32 @@ def outline(px, fw):
     return out
 
 
-for name, (table, _) in RULES.items():
+def polished_actor(name):
     px = load(name)
-    save(name, remap(px, table) if table else px)
-for name in ACTORS:
-    px = load(name)
-    fw = FRAME_W.get(name, 16)
-    save(name, outline(remap(px, ACTOR), fw))
-print("done")
+    if not name.startswith("player_"):
+        px = remap(px, ACTOR)
+    return outline(px, FRAME_W.get(name, 16))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+", choices=[*RULES, *ACTORS])
+    args = parser.parse_args()
+    selected = set(args.only or [*RULES, *ACTORS])
+    for name, (table, _) in RULES.items():
+        if name in selected:
+            px = load(name)
+            save(name, remap(px, table) if table else px)
+    for name in ACTORS:
+        if name not in selected:
+            continue
+        px = polished_actor(name)
+        if name == "player_walk":
+            idle = polished_actor("player_idle")
+            for y in range(7):
+                px[y] = idle[y] * (len(px[y]) // len(idle[y]))
+        save(name, px)
+
+
+if __name__ == "__main__":
+    main()
