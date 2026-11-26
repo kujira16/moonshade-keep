@@ -5,6 +5,13 @@
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
+  // 内部解像度の倍率。ゲームの計算は 160×144 のまま、描画だけ K 倍の細かさで行う
+  let K = 1;
+  function setRenderScale(k) {
+    K = k;
+    canvas.width = W * K; canvas.height = H * K;
+    ctx.imageSmoothingEnabled = false;
+  }
   const pal = () => Sprites.pal; // [明, 中明, 中暗, 暗]
 
   // ================= 入力 =================
@@ -512,7 +519,8 @@
   // ================= 描画 =================
   function spr(name, f, x, y, flip = false) {
     const s = Sprites.get(name, f);
-    ctx.drawImage(flip ? s.flip : s.img, Math.round(x), Math.round(y));
+    // 高解像度（K倍）のときは 1/K ピクセル単位で位置を合わせる
+    ctx.drawImage(flip ? s.flip : s.img, Math.round(x * K) / K, Math.round(y * K) / K, s.w, s.h);
   }
 
   // 遠景の城シルエット（手続き生成）
@@ -561,10 +569,10 @@
   }
 
   function drawTile(name, tx, ty) {
-    const { img, w, h } = Sprites.get(name);
+    const { img, w, h, scale: sc } = Sprites.get(name);
     const x = tx * T, y = ty * T;
     if (w !== 2 * T || h !== 2 * T) {
-      ctx.drawImage(img, x, y);
+      ctx.drawImage(img, x, y, w, h);
       return;
     }
 
@@ -573,7 +581,7 @@
     if (name === "t_brick_top" || name === "t_ledge") sy = 0;
     if (name === "t_pillar") sx = T / 2;
     if (name === "t_spikes") { sy = T / 2; sh = h - sy; }
-    ctx.drawImage(img, sx, sy, T, sh, x, y, T, T);
+    ctx.drawImage(img, sx * sc, sy * sc, T * sc, sh * sc, x, y, T, T);
   }
 
   function drawWorld() {
@@ -684,6 +692,7 @@
   }
 
   function render() {
+    ctx.setTransform(K, 0, 0, K, 0, 0);
     const P = pal();
     if (state === "title") { drawTitle(); return; }
     if (state === "over") {
@@ -718,7 +727,8 @@
     // ドットの太さが揃い、スクロール時に縞模様のチラつきが出ない）
     const dpr = window.devicePixelRatio || 1;
     const aw = r.width - 28, ah = r.height - 28; // 余白と枠の分を引く
-    const k = Math.max(1, Math.floor(Math.min((aw * dpr) / W, (ah * dpr) / H)));
+    let k = Math.max(1, Math.floor(Math.min((aw * dpr) / W, (ah * dpr) / H)));
+    if (k >= K) k = Math.floor(k / K) * K; // 内部解像度の整数倍にして、ドットの太さを揃える
     canvas.style.width = (W * k) / dpr + "px";
     canvas.style.height = (H * k) / dpr + "px";
   }
@@ -745,6 +755,7 @@
   (async function boot() {
     await Sprites.loadOverrides();
     Sprites.bakeAll();
+    setRenderScale(Sprites.renderScale);
     parseLevel();
     fit(); setTimeout(fit, 100);
     requestAnimationFrame(loop);

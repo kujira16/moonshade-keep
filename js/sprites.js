@@ -466,11 +466,13 @@
       ctx.putImageData(img, 0, 0);
       return c;
     };
-    return { w: f.w, h: f.h, img: make(false), flip: make(true) };
+    // scale: 1ゲームピクセルあたりの画像ピクセル数（高解像度の絵は 2 や 4）。w/h はゲーム上の大きさ
+    const sc = f.scale || 1;
+    return { w: f.w / sc, h: f.h / sc, scale: sc, img: make(false), flip: make(true) };
   }
 
   // PNG（AI生成画像など）を4階調に量子化して読み込む
-  function quantizeImage(img, frameW) {
+  function quantizeImage(img, frameW, scale = 1) {
     const c = document.createElement("canvas");
     c.width = img.width; c.height = img.height;
     const ctx = c.getContext("2d");
@@ -487,7 +489,7 @@
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
         px.push(shade ?? (lum > 192 ? 1 : lum > 128 ? 2 : lum > 64 ? 3 : 4));
       }
-      frames.push({ w: fw, h: c.height, px });
+      frames.push({ w: fw, h: c.height, px, scale });
     }
     return frames;
   }
@@ -504,6 +506,7 @@
   const Sprites = {
     PALETTES,
     paletteName: localStorage.getItem("mk_palette") || "green",
+    renderScale: 1, // 画面の内部解像度の倍率（overrides.json の renderScale）
     baked: {},
     get pal() { return PALETTES[this.paletteName] || PALETTES.green; },
     bakeAll() {
@@ -522,9 +525,12 @@
         if (!r.ok) return;
         list = await r.json();
       } catch (e) { return; }
-      const jobs = Object.entries(list.sprites || {}).map(([name, frameW]) => new Promise((res) => {
+      // "名前": 1フレームの横幅  または  "名前": { "w": 横幅(画像px), "scale": 倍率 }
+      this.renderScale = Math.max(1, Math.floor(list.renderScale || 1));
+      const jobs = Object.entries(list.sprites || {}).map(([name, v]) => new Promise((res) => {
+        const frameW = typeof v === "object" ? v.w : v, scale = (typeof v === "object" && v.scale) || 1;
         const img = new Image();
-        img.onload = () => { raw[name] = quantizeImage(img, frameW); res(); };
+        img.onload = () => { raw[name] = quantizeImage(img, frameW, scale); res(); };
         img.onerror = () => { console.warn("override not found:", name); res(); };
         img.src = "assets/" + name + ".png";
       }));
