@@ -40,6 +40,7 @@
   #bStart, #bSel { bottom:10px; width:70px; height:26px; border-radius:13px; font-size:11px; left:50%; }
   #bStart { margin-left:6px; } #bSel { margin-left:-76px; }
   @media (orientation:landscape) {
+    body.touch #view { margin-bottom:24px; }
     body.touch #pad { position:fixed; inset:0; height:auto; pointer-events:none; }
     body.touch #pad .btn { pointer-events:auto; opacity:.75; }
     #dpad { left:calc(3% + env(safe-area-inset-left)); top:auto; bottom:30px; margin-top:0; }

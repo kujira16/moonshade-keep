@@ -19,10 +19,12 @@ import numpy as np
 from PIL import Image, ImageDraw, PngImagePlugin
 
 if __package__:
+    from . import hires_parts as hires
     from . import knight_parts as knight
     from . import sprite_grid as grid
     from .sprite_palette import GREEN as PALETTE, LEGACY_GREEN
 else:
+    import hires_parts as hires
     import knight_parts as knight
     import sprite_grid as grid
     from sprite_palette import GREEN as PALETTE, LEGACY_GREEN
@@ -39,7 +41,14 @@ MIN_SCORE = .78
 KNIGHT_MIN_SCORE = .62
 
 
+@lru_cache(maxsize=1)
+def config():
+    return json.loads(Path(__file__).with_name("sprite_prompts.json").read_text(encoding="utf-8"))
+
+
 def raw_folder(name):
+    if config()["sprites"][name].get("scale") == 2:
+        return RAW / "hires_32" / name
     return RAW / "knight_v3" / name if name.startswith("player_") else RAW / name
 
 
@@ -94,7 +103,7 @@ def read_selection(name):
 
 @lru_cache(maxsize=1)
 def knight_settings():
-    settings = json.loads(Path(__file__).with_name("sprite_prompts.json").read_text(encoding="utf-8"))["knight"]
+    settings = config()["knight"]
     target = knight.template_parts(ROOT / settings["template"], settings["parts"])
     return settings, target
 
@@ -104,7 +113,13 @@ def make_prompt(name, spec, common, retry):
     frames = spec["frames"]
     cols = width * len(frames)
     canvas = (1536, 1024) if len(frames) > 1 else (1024, 1024)
-    if name.startswith("player_"):
+    if spec.get("scale") == 2:
+        cols, width, height = cols * 2, width * 2, height * 2
+        prompt = common.format(cols=cols, rows=height, pitch_x=canvas[0] / cols, pitch_y=canvas[1] / height)
+        if name.startswith("player_"):
+            prompt += " " + knight_settings()[0]["prompt"]
+        prompt += " Opaque art edge to edge." if spec.get("texture") else " Transparent outside the subject."
+    elif name.startswith("player_"):
         settings, _ = knight_settings()
         cols, width, height = cols * 2, 32, 32
         prompt = (settings["prompt"] + f" Draw exactly {cols}x32 logical cells across the canvas."
@@ -129,9 +144,13 @@ def selected_idle():
 def evaluate(image, name, spec):
     width, height = spec["size"]
     n = len(spec["frames"])
+    if spec.get("scale") == 2:
+        samples, agreement = grid.read_color_sheet(image, width * 2 * n, height * 2,
+                                                  aligned=image.info.get("logical_grid") == "aligned")
+        return evaluate_color_sample(Image.fromarray(samples), agreement, name, spec)
     if name.startswith("player_"):
         samples, agreement = grid.read_color_sheet(image, 32 * n, 32)
-        return evaluate_knight(Image.fromarray(samples), agreement, name, spec)
+        return evaluate_color_sample(Image.fromarray(samples), agreement, name, spec)
     allowed = tuple(index + 1 for index in spec.get("shades", range(4)))
     query, agreement = grid.read_sheet(image, width * n, height, allowed, spec.get("texture", False))
     if not agreement:
@@ -155,9 +174,13 @@ def decode_png(content):
         return image.convert("RGBA")
 
 
-def evaluate_knight(sample, agreement, name, spec):
+def evaluate_color_sample(sample, agreement, name, spec):
     settings, target = knight_settings()
-    image, parts = knight.evaluate(np.asarray(sample), agreement, name, spec, target, settings["thresholds"])
+    if spec.get("scale") == 2:
+        target = np.repeat(np.repeat(target, 2, axis=0), 2, axis=1)
+        image, parts = hires.evaluate(np.asarray(sample), agreement, name, spec, target, settings["thresholds"])
+    else:
+        image, parts = knight.evaluate(np.asarray(sample), agreement, name, spec, target, settings["thresholds"])
     if image is not None:
         if name == "player_walk":
             match_walk_head(image)
@@ -170,7 +193,10 @@ def match_walk_head(walk):
     idle_path = SOURCE / "player_idle.png"
     if idle_path.is_file():
         idle = read_image(idle_path)
-        head = idle.crop((0, 0, idle.width, knight.HEAD_ROWS))
+        if idle.width * 4 != walk.width or idle.height != walk.height:
+            return walk
+        rows = hires.HEAD_ROWS if idle.width == 32 else knight.HEAD_ROWS
+        head = idle.crop((0, 0, idle.width, rows))
         for x in range(0, walk.width, idle.width):
             walk.paste(head, (x, 0))
     return walk
@@ -238,16 +264,16 @@ def load_candidates(name, spec):
         for index, image, _ in choices:
             if image is not None:
                 image.info["mode"] = modes.get(str(index), "")
-    if not choices and name.startswith("player_"):
+    if not choices and (name.startswith("player_") or spec.get("scale") == 2):
         for record in saved_candidate_records(name):
             if not record.get("sample"):
                 continue
-            image, parts = evaluate_knight(decode_png(record["sample"]), record["agreement"], name, spec)
+            image, parts = evaluate_color_sample(decode_png(record["sample"]), record["agreement"], name, spec)
             if image is not None:
                 image.info["mode"] = record.get("mode", "")
             choices.append((record["index"], image, parts))
     if not choices:
-        raise FileNotFoundError(f"No candidate sheets in assets/raw/{name}/")
+        raise FileNotFoundError(f"No candidate sheets in {raw_folder(name).relative_to(ROOT)}")
     return choices
 
 
@@ -292,6 +318,7 @@ def save_candidates(name, spec, candidates, selected, manual=None):
     metadata = PngImagePlugin.PngInfo()
     metadata.add_text("sprite_candidates", json.dumps(records, separators=(",", ":")), zip=True)
     metadata.add_text("selected_candidate", str(selected))
+    metadata.add_text("render_scale", str(spec.get("scale", 1)))
     if manual is not None:
         metadata.add_text("manual_candidate", str(manual))
     board.save(PREVIEW / "candidates" / f"{name}.png", pnginfo=metadata)
@@ -320,7 +347,11 @@ def update_previews(sprites):
         if not path.is_file():
             continue
         image = read_image(path)
-        validate_sprite(image, spec)
+        width, height = spec["size"]
+        if spec.get("scale") == 2 and image.size == (width * len(spec["frames"]) // 2, height // 2):
+            validate_sprite(image, {**spec, "size": [width // 2, height // 2]})
+        else:
+            validate_sprite(image, spec)
         image = Image.fromarray(grid.PALETTE[grid.classify(np.asarray(image), (1, 2, 3, 4))])
         enlarged = image.resize((image.width * 8, image.height * 8), Image.Resampling.NEAREST)
         preview = Image.new("RGB", enlarged.size, PREVIEW_BG)
@@ -391,48 +422,69 @@ def update_knight_preview(sprites):
 
 
 def remember_baseline(sprites):
-    baseline = RAW / "_baseline"
+    baseline = RAW / "_baseline_hires"
     baseline.mkdir(exist_ok=True)
+    snapshot = PREVIEW / "compare.png"
+    stored = {}
+    if snapshot.exists():
+        with Image.open(snapshot) as previous:
+            stored = json.loads(previous.info.get("hires_baseline", "{}"))
     for name in sprites:
-        source = SOURCE / f"{name}.png"
+        source = ASSETS / f"{name}.png"
         backup = baseline / source.name
-        if source.is_file() and not backup.exists():
+        spec = sprites[name]
+        if backup.exists():
+            continue
+        if name in stored:
+            decode_png(stored[name]).save(backup)
+        elif source.is_file() and read_image(source).height * 2 == spec["size"][1]:
             copyfile(source, backup)
 
 
 def update_comparison(sprites):
     panels = []
-    for folder, label in ((RAW / "_baseline", "BEFORE"), (SOURCE, "AFTER")):
+    before = RAW / "_baseline_hires"
+    if not all((before / f"{name}.png").is_file() for name in sprites):
+        return
+    baseline = {}
+    for folder, label, zoom in ((before, "BEFORE  |  16x enlargement", 16),
+                                (ASSETS, "AFTER  |  8x enlargement", 8)):
         items = []
         for name, spec in sprites.items():
             path = folder / f"{name}.png"
             if not path.is_file():
                 continue
             sprite = read_image(path)
-            validate_sprite(sprite, spec)
-            items.append((name, sprite.resize((sprite.width * 8, sprite.height * 8), Image.Resampling.NEAREST)))
+            if folder == before:
+                baseline[name] = encoded_png(sprite)
+            if sprite.height * zoom != spec["size"][1] * 8:
+                return  # A partial run may still have legacy images alongside the new assets.
+            sprite = Image.fromarray(grid.PALETTE[grid.classify(np.asarray(sprite), (1, 2, 3, 4))])
+            items.append((name, sprite.resize((sprite.width * zoom, sprite.height * zoom), Image.Resampling.NEAREST)))
         if not items:
             return
         positions = []
         x, y, row_h = 12, 38, 0
         for name, image in items:
-            if x + image.width + 12 > 1120:
+            if x + image.width + 12 > 1664:
                 x, y, row_h = 12, y + row_h + 14, 0
             positions.append((name, image, x, y))
             x += image.width + 12
             row_h = max(row_h, image.height + 16)
-        panel = Image.new("RGB", (1120, y + row_h + 20), (15, 56, 15))
+        panel = Image.new("RGB", (1664, y + row_h + 20), PALETTE[3])
         draw = ImageDraw.Draw(panel)
-        draw.text((12, 12), label, fill=(205, 224, 165))
+        draw.text((12, 12), label, fill=PALETTE[0])
         for name, image, x, y in positions:
-            draw.text((x, y), name, fill=(205, 224, 165))
+            draw.text((x, y), name, fill=PALETTE[0])
             panel.paste(PREVIEW_BG, (x, y + 16, x + image.width, y + 16 + image.height))
             panel.paste(image, (x, y + 16), image)
         panels.append(panel)
-    output = Image.new("RGB", (1120, sum(panel.height for panel in panels)), (15, 56, 15))
+    output = Image.new("RGB", (1664, sum(panel.height for panel in panels)), PALETTE[3])
     output.paste(panels[0], (0, 0))
     output.paste(panels[1], (0, panels[0].height))
-    output.save(PREVIEW / "compare.png")
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("hires_baseline", json.dumps(baseline, separators=(",", ":")), zip=True)
+    output.save(PREVIEW / "compare.png", pnginfo=metadata)
 
 
 def update_overrides(written):
@@ -440,6 +492,8 @@ def update_overrides(written):
         return
     path = ASSETS / "overrides.json"
     data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    if any(isinstance(value, dict) and value.get("scale") == 2 for value in written.values()):
+        data["renderScale"] = 2
     data.setdefault("sprites", {}).update(written)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -495,8 +549,8 @@ def main():
     parser.add_argument("--model", default=os.getenv("IMAGE_MODEL", "gpt-image-1"))
     args = parser.parse_args()
 
-    config = json.loads(Path(__file__).with_name("sprite_prompts.json").read_text(encoding="utf-8"))
-    sprites = config["sprites"]
+    settings = config()
+    sprites = settings["sprites"]
     picks = {}
     for pick in args.pick:
         name, _, number = pick.partition("=")
@@ -507,7 +561,7 @@ def main():
         parser.error("Select sprites with --all, --only, or --pick")
     requested = set(sprites) if args.all else set(picks)
     if args.reprocess and not (args.all or args.only or picks):
-        requested = {name for name in sprites if name.startswith("player_")}
+        requested = set(sprites)
     if args.only:
         requested.update(name.strip() for name in args.only.split(","))
     if unknown := requested - sprites.keys():
@@ -532,7 +586,7 @@ def main():
         try:
             folder = raw_folder(name)
             folder.mkdir(parents=True, exist_ok=True)
-            if (not name.startswith("player_") and name in picks
+            if (spec.get("scale") != 2 and not name.startswith("player_") and name in picks
                     and not any(raw_path(name, i).is_file() for i in range(1, 9))):
                 candidates = saved_preview_candidates(name)
                 if name == "player_walk":
@@ -542,7 +596,7 @@ def main():
             elif offline:
                 candidates = load_candidates(name, spec)
             else:
-                candidates = generate_candidates(client, args.model, name, spec, config["common"])
+                candidates = generate_candidates(client, args.model, name, spec, settings["common"])
             if not candidates:
                 raise FileNotFoundError(f"No saved candidates for {name}")
             previous = read_selection(name) if offline else {}
@@ -551,7 +605,8 @@ def main():
                 preview_path = PREVIEW / "candidates" / f"{name}.png"
                 if preview_path.is_file():
                     with Image.open(preview_path) as preview:
-                        saved = preview.info.get("manual_candidate")
+                        same_scale = preview.info.get("render_scale", "1") == str(spec.get("scale", 1))
+                        saved = preview.info.get("manual_candidate") if same_scale else None
                     if saved is not None:
                         manual = int(saved)
             if manual is None:
@@ -569,7 +624,8 @@ def main():
             (folder / "selection.json").write_text(
                 json.dumps({"candidate": index, "manual": manual, "scores": scores}, indent=2) + "\n",
                 encoding="utf-8")
-            written[name] = spec["size"][0]
+            width = spec["size"][0]
+            written[name] = {"w": width, "scale": spec["scale"]} if spec.get("scale", 1) > 1 else width
             print(f"Selected {name} #{index} ({mean_score(scores):.1%})")
         except Exception as error:
             failed.append(name)
@@ -578,8 +634,12 @@ def main():
     if "player_idle" in written and "player_walk" not in written:
         walk_path = SOURCE / "player_walk.png"
         if walk_path.is_file():
-            match_walk_head(read_image(walk_path)).save(walk_path)
-            written["player_walk"] = sprites["player_walk"]["size"][0]
+            walk = read_image(walk_path)
+            spec = sprites["player_walk"]
+            width, height = spec["size"]
+            if walk.size == (width * len(spec["frames"]), height):
+                match_walk_head(walk).save(walk_path)
+                written["player_walk"] = written["player_idle"]
     if written:
         process = subprocess.run([sys.executable, str(ROOT / "tools/polish_sprites.py"), "--only", *written])
         if process.returncode:
@@ -587,9 +647,9 @@ def main():
     update_overrides(written)
     update_service_worker(written)
     update_previews(sprites)
-    if any(name.startswith("player_") for name in written):
+    if any(name.startswith("player_") and sprites[name].get("scale") != 2 for name in written):
         update_knight_preview(sprites)
-    if any(not name.startswith("player_") for name in written):
+    if written:
         update_comparison(sprites)
     if failed:
         print("Failed sprites: " + ", ".join(failed), file=sys.stderr)

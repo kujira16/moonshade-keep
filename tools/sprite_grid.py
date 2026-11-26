@@ -261,7 +261,7 @@ def finish(frame, name, spec):
     return result
 
 
-def score_frames(frames, agreement, name):
+def score_frames(frames, agreement, name, scale=1):
     boxes = [bounds(frame) for frame in frames]
     if any(box is None for box in boxes):
         return None
@@ -274,7 +274,8 @@ def score_frames(frames, agreement, name):
     actor = name.startswith("player_") or name in {"bat", "bat_hang", "skeleton", "ghost", "boss_skull", "boss_wing"}
     if actor:
         light = min(1, bright / .4)
-        size = np.mean([min(1, (r-l)/8, 14/(r-l), (b-t)/12, 16/(b-t)) for l,t,r,b in boxes])
+        size = np.mean([min(1, (r-l)/(8*scale), 14*scale/(r-l),
+                            (b-t)/(12*scale), 16*scale/(b-t)) for l,t,r,b in boxes])
     elif name in {"t_back", "t_pillar"}:
         light, size = min(1, (1 - bright) / .8), 1
     else:

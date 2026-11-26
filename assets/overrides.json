@@ -2,29 +2,101 @@
   "_help": "差し替えたいスプライト名: 1フレームの横幅(px) を書き、assets/<名前>.png を置く。例: \"skeleton\": 16",
   "renderScale": 2,
   "sprites": {
-    "player_idle": 16,
-    "player_walk": 16,
-    "player_jump": 16,
-    "player_attack": 16,
-    "player_attack_air": 16,
-    "bat": 16,
-    "bat_hang": 16,
-    "skeleton": 16,
-    "ghost": 16,
-    "boss_skull": 16,
-    "boss_wing": 16,
-    "candle": 8,
-    "heart": 8,
-    "gem": 8,
-    "bone": 8,
-    "fireball": 8,
-    "orb": 8,
-    "t_brick": 16,
-    "t_brick_top": 16,
-    "t_ledge": 16,
-    "t_spikes": 16,
-    "t_back": 16,
-    "t_pillar": 16,
-    "t_window": 16
+    "player_idle": {
+      "w": 32,
+      "scale": 2
+    },
+    "player_walk": {
+      "w": 32,
+      "scale": 2
+    },
+    "player_jump": {
+      "w": 32,
+      "scale": 2
+    },
+    "player_attack": {
+      "w": 32,
+      "scale": 2
+    },
+    "player_attack_air": {
+      "w": 32,
+      "scale": 2
+    },
+    "bat": {
+      "w": 32,
+      "scale": 2
+    },
+    "bat_hang": {
+      "w": 32,
+      "scale": 2
+    },
+    "skeleton": {
+      "w": 32,
+      "scale": 2
+    },
+    "ghost": {
+      "w": 32,
+      "scale": 2
+    },
+    "boss_skull": {
+      "w": 32,
+      "scale": 2
+    },
+    "boss_wing": {
+      "w": 32,
+      "scale": 2
+    },
+    "candle": {
+      "w": 16,
+      "scale": 2
+    },
+    "heart": {
+      "w": 16,
+      "scale": 2
+    },
+    "gem": {
+      "w": 16,
+      "scale": 2
+    },
+    "bone": {
+      "w": 16,
+      "scale": 2
+    },
+    "fireball": {
+      "w": 16,
+      "scale": 2
+    },
+    "orb": {
+      "w": 16,
+      "scale": 2
+    },
+    "t_brick": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_brick_top": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_ledge": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_spikes": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_back": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_pillar": {
+      "w": 32,
+      "scale": 2
+    },
+    "t_window": {
+      "w": 32,
+      "scale": 2
+    }
   }
 }
