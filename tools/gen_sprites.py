@@ -422,14 +422,16 @@ def update_knight_preview(sprites):
 
 
 def remember_baseline(sprites):
-    baseline = RAW / "_baseline_hires"
+    baseline = RAW / "_baseline_knight_cleanup"
     baseline.mkdir(exist_ok=True)
     snapshot = PREVIEW / "compare.png"
     stored = {}
     if snapshot.exists():
         with Image.open(snapshot) as previous:
-            stored = json.loads(previous.info.get("hires_baseline", "{}"))
+            stored = json.loads(previous.info.get("knight_cleanup_before", "{}"))
     for name in sprites:
+        if not name.startswith("player_"):
+            continue
         source = ASSETS / f"{name}.png"
         backup = baseline / source.name
         spec = sprites[name]
@@ -437,28 +439,29 @@ def remember_baseline(sprites):
             continue
         if name in stored:
             decode_png(stored[name]).save(backup)
-        elif source.is_file() and read_image(source).height * 2 == spec["size"][1]:
+        elif source.is_file() and read_image(source).height == spec["size"][1]:
             copyfile(source, backup)
 
 
 def update_comparison(sprites):
     panels = []
-    before = RAW / "_baseline_hires"
-    if not all((before / f"{name}.png").is_file() for name in sprites):
+    knight_specs = {name: spec for name, spec in sprites.items() if name.startswith("player_")}
+    before = RAW / "_baseline_knight_cleanup"
+    if not all((before / f"{name}.png").is_file() for name in knight_specs):
         return
     baseline = {}
-    for folder, label, zoom in ((before, "BEFORE  |  16x enlargement", 16),
-                                (ASSETS, "AFTER  |  8x enlargement", 8)):
+    zoom = 8
+    for folder, label in ((before, "BEFORE  |  32px knight"),
+                          (ASSETS, "AFTER  |  32px knight")):
         items = []
-        for name, spec in sprites.items():
+        for name, spec in knight_specs.items():
             path = folder / f"{name}.png"
             if not path.is_file():
                 continue
             sprite = read_image(path)
             if folder == before:
                 baseline[name] = encoded_png(sprite)
-            if sprite.height * zoom != spec["size"][1] * 8:
-                return  # A partial run may still have legacy images alongside the new assets.
+            validate_sprite(sprite, spec)
             sprite = Image.fromarray(grid.PALETTE[grid.classify(np.asarray(sprite), (1, 2, 3, 4))])
             items.append((name, sprite.resize((sprite.width * zoom, sprite.height * zoom), Image.Resampling.NEAREST)))
         if not items:
@@ -483,7 +486,7 @@ def update_comparison(sprites):
     output.paste(panels[0], (0, 0))
     output.paste(panels[1], (0, panels[0].height))
     metadata = PngImagePlugin.PngInfo()
-    metadata.add_text("hires_baseline", json.dumps(baseline, separators=(",", ":")), zip=True)
+    metadata.add_text("knight_cleanup_before", json.dumps(baseline, separators=(",", ":")), zip=True)
     output.save(PREVIEW / "compare.png", pnginfo=metadata)
 
 
@@ -616,10 +619,10 @@ def main():
                 if selected is None:
                     raise ValueError(f"Candidate {manual} does not exist")
             index, png, scores = selected
-            save_candidates(name, spec, candidates, index, manual)
             if png is None:
-                raise ValueError(f"Candidate {index} has an empty frame")
+                raise ValueError(f"Candidate {index} failed the frame or artwork checks")
             validate_sprite(png, spec)
+            save_candidates(name, spec, candidates, index, manual)
             png.save(SOURCE / f"{name}.png")
             (folder / "selection.json").write_text(
                 json.dumps({"candidate": index, "manual": manual, "scores": scores}, indent=2) + "\n",
@@ -649,7 +652,7 @@ def main():
     update_previews(sprites)
     if any(name.startswith("player_") and sprites[name].get("scale") != 2 for name in written):
         update_knight_preview(sprites)
-    if written:
+    if any(name.startswith("player_") for name in written):
         update_comparison(sprites)
     if failed:
         print("Failed sprites: " + ", ".join(failed), file=sys.stderr)

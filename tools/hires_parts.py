@@ -137,6 +137,91 @@ def creature_details(frame, name):
     return result
 
 
+def neighbors(array, pad):
+    padded = np.pad(array, 1, constant_values=pad)
+    return np.stack((padded[1:-1, :-2], padded[1:-1, 2:],
+                     padded[:-2, 1:-1], padded[2:, 1:-1]))
+
+
+def fill_knight_outline(parts, target):
+    """Recover the material under dark source lines; redraw the contour later."""
+    filled = parts.copy()
+    for y, x in zip(*np.nonzero(parts == "O")):
+        window = parts[max(0, y - 2):y + 3, max(0, x - 2):x + 3]
+        options = "HF" if y < 18 else "PCLTS"
+        if y >= 28:
+            options += "K"
+        counts = [np.count_nonzero(window == part) for part in options]
+        if max(counts):
+            filled[y, x] = options[int(np.argmax(counts))]
+        elif target[y, x] in options:
+            filled[y, x] = target[y, x]
+        else:
+            filled[y, x] = "H" if y < 18 else ("C" if y < 24 else "T")
+    return filled
+
+
+def checker_locations(frame):
+    a, b, c, d = frame[:-1, :-1], frame[:-1, 1:], frame[1:, :-1], frame[1:, 1:]
+    return np.argwhere((a > 0) & (b > 0) & (a == d) & (b == c) & (a != b))
+
+
+def remove_checkers(frame, protected):
+    """Merge alternating 2x2 dots, favoring a flat run away from small landmarks."""
+    result = frame.copy()
+    while True:
+        original = checker_locations(result)
+        if not len(original):
+            return result
+        updated = False
+        for y, x in original:
+            before = len(checker_locations(result))
+            if result[y, x] != result[y + 1, x + 1] or result[y, x + 1] != result[y + 1, x]:
+                continue
+            for yy, xx in ((y + 1, x + 1), (y + 1, x), (y, x + 1), (y, x)):
+                if protected[yy, xx]:
+                    continue
+                value = result[yy, xx]
+                replacement = result[y, x + 1] if value == result[y, x] else result[y, x]
+                result[yy, xx] = replacement
+                if len(checker_locations(result)) < before:
+                    updated = True
+                    break
+                result[yy, xx] = value
+        if not updated:
+            return result
+
+
+def smooth_materials(frame, parts, protected):
+    nearby = neighbors(frame, 0)
+    same_part = neighbors(parts, ".") == parts
+    disagrees = ((nearby != frame) & same_part).sum(axis=0)
+    counts = np.stack([((nearby == shade) & same_part).sum(axis=0) for shade in range(1, 5)])
+    majority = counts.argmax(axis=0) + 1
+    smooth = (disagrees >= 2) & (frame != 0) & ~protected
+    return np.where(smooth, majority, frame).astype(np.uint8)
+
+
+def knight_interior(frame):
+    opaque = frame != 0
+    outline = (frame == 4) & np.any(neighbors(frame, 0) == 0, axis=0)
+    return opaque & ~outline
+
+
+def knight_ink(frame, hair, eye):
+    inside = knight_interior(frame)
+    shares_eye = np.any(neighbors(eye, False), axis=0)
+    ink_in_hair = (frame == 4) & hair & inside & ~eye & ~shares_eye
+    shares = np.array([np.count_nonzero(inside & (frame == shade)) for shade in range(1, 5)])
+    return shares / max(1, np.count_nonzero(inside)), int(ink_in_hair.sum())
+
+
+def shade_balance(shares):
+    low, high = np.array([.25, .25, .10, 0]), np.array([.40, .40, .25, .25])
+    excess = np.maximum(low - shares, 0) + np.maximum(shares - high, 0)
+    return max(0, 1 - float(excess.sum()))
+
+
 def knight_details(parts, target, name):
     """Add the small material accents that would otherwise vanish in reduction."""
     work = parts.copy()
@@ -160,9 +245,9 @@ def knight_details(parts, target, name):
     work[work == "E"] = "O"
     work[work == "A"] = "H"
     work[:4] = "."
-    for y, x in ((0, 21), (1, 20), (2, 19), (3, 19)):
+    for y, x in ((0, 21), (1, 21), (1, 20), (2, 20)):
         work[y, x] = "A"
-    work[4, 19] = "H"
+    work[3:5, 20] = "H"
     work[12:15, 22:24] = "E"
     for material in ("P", "C", "T", "B", "L"):
         zone = (yy >= 18) & ((xx < 25) if attacking else True)
@@ -178,35 +263,65 @@ def knight_details(parts, target, name):
         work[:, 27:][work[:, 27:] == "W"] = "."
         work[16:18, 23:32] = "W"
 
+    work = fill_knight_outline(work, target)
+    stray_skin = (work == "F") & (yy < 15) & ((neighbors(work, ".") == "H").sum(axis=0) >= 3)
+    work[stray_skin] = "H"
+    work[(work == "B") & (yy != 24)] = "T"
+    cloth = (yy >= 22) & (yy <= 27) & (xx >= 12) & (xx <= 23)
+    work[cloth & ((target == "T") | ((yy >= 25) & (xx >= 14) & (xx <= 21))) &
+         np.isin(work, ["C", "P", "T"])] = "T"
     frame = np.array([knight.PART_SHADE[p] for p in work.flat], dtype=np.uint8).reshape(work.shape)
+    hair_part = np.isin(work, ["H", "A"])
+    # The lower-left edge of the hair gets a single broad shadow band.
+    frame[(work == "H") & (xx <= 9) & (yy >= 11)] = 2
+    frame[3, 20] = 2
+    armor = np.isin(work, ["P", "C", "L"])
+    light = armor & ~np.isin(np.pad(work, 1, constant_values=".")[:-2, 1:-1], ["P", "C", "L"])
+    frame[light & (xx >= 12) & (yy >= 18) & (yy < 23)] = 1
+    protected = np.isin(work, ["A", "E", "B", "K", "W"])
+    protected[3, 20] = True
+    frame = smooth_materials(frame, work, protected)
     frame[12, 22] = 1
     # Alternating braid links near the back of the head.
     for y, x in ((9, 10), (11, 9), (13, 8)):
         if frame[y - 1:y + 2, x:x + 3].any():
             frame[y:y + 2, x:x + 2] = 2
             frame[y + 1, x] = 3
+            protected[y:y + 2, x:x + 2] = True
     # Rounded pauldron, a polished spot on it, and engraved lines in the breastplate.
-    disk = (xx - 11) ** 2 + (yy - 21) ** 2 <= 7
+    radius = (xx - 11) ** 2 + (yy - 21) ** 2
+    disk = radius <= 7
+    rim = (radius > 7) & (radius <= 12) & (frame != 0)
+    frame[rim] = 3
     frame[disk] = 2
     frame[20, 10:12] = 1
     frame[21, 9] = 3
     for x in (16, 19):
         frame[20:23, x:x + 2] = 2
         frame[21:23, x] = 3
-    # Keep the checker pattern confined to the tunic, even in airborne poses.
+    protected[disk | rim] = True
+    protected[20:23, 16:21] = True
+    collar = (yy == 18) & (xx >= 16) & (xx <= 24) & (frame != 0)
+    frame[collar] = 3
+    protected[collar] = True
+    # Keep the tunic a solid dark plane under the belt.
     waist = (yy >= 25) & (yy <= 27) & (xx >= 10) & (xx <= 23)
-    tunic = (work == "T") & waist
-    if np.count_nonzero(tunic) < 6:
-        tunic = (target == "T") & waist
+    tunic = waist & ((work == "T") | ((target == "T") & (work != ".")))
     frame[tunic] = 3
-    frame[tunic & ((yy + xx) % 2 == 0)] = 2
-    frame[24, 16:21] = 4
+    belt = (yy == 24) & (xx >= 11) & (xx <= 22) & (frame != 0)
+    frame[belt] = 4
     frame[24, 18:20] = 1
+    protected[belt] = True
+    protected[24, 18:20] = True
     if attacking:
         frame[15:19, 23] = 1
+        protected[15:19, 23] = True
     else:
         frame[24, 8:11] = 1
-    return outlined(frame)
+        protected[24, 8:11] = True
+    frame = remove_checkers(outlined(frame), protected)
+    shares, hair_ink = knight_ink(frame, hair_part, work == "E")
+    return frame, shares, hair_ink
 
 
 def score_detail(parts):
@@ -226,7 +341,6 @@ def has_knight_details(frame, attacking):
     eye = frame[12:15, 22:24]
     braid = frame[9:15, 8:12]
     pauldron = frame[19:24, 9:14]
-    chainmail = frame[25:28, 10:24]
     hilt = frame[15:19, 23] if attacking else frame[24, 8:11]
     return all((
         np.count_nonzero(eye == 4) == 5 and np.count_nonzero(eye == 1) == 1,
@@ -234,7 +348,6 @@ def has_knight_details(frame, attacking):
         np.count_nonzero(braid == 3) >= 2 and np.count_nonzero(braid == 2) >= 4,
         np.count_nonzero(pauldron == 2) >= 8 and np.any(pauldron == 1),
         np.all(frame[21:23, [16, 19]] == 3),
-        np.any(chainmail == 2) and np.any(chainmail == 3),
         np.all(frame[24, 18:20] == 1) and np.any(hilt == 1),
     ))
 
@@ -243,7 +356,7 @@ def evaluate(sample, agreement, name, spec, target, thresholds):
     if not agreement:
         return None, {}
     width, height = spec["size"]
-    frames, templates, details = [], [], []
+    frames, templates, details, balances = [], [], [], []
     if sample.shape != (height * 2, width * 2 * len(spec["frames"]), 4):
         return None, {}
     for i in range(len(spec["frames"])):
@@ -257,9 +370,13 @@ def evaluate(sample, agreement, name, spec, target, thresholds):
             overlap = (parts != ".") | (target != ".")
             templates.append(float(weights[(parts == target) & overlap].sum() / weights[overlap].sum()))
             details.append(score_detail(parts))
-            frame = knight_details(parts, target, name)
-            if not has_knight_details(frame, "attack" in name):
+            frame, shares, hair_ink = knight_details(parts, target, name)
+            torso = knight_interior(frame)[18:]
+            torso_dark = np.count_nonzero(torso & (frame[18:] == 4)) / max(1, np.count_nonzero(torso))
+            if (not has_knight_details(frame, "attack" in name) or
+                    max(shares[3], torso_dark) > .25 or hair_ink or len(checker_locations(frame))):
                 return None, {}
+            balances.append(shade_balance(shares))
         else:
             frame = reduce_map(materials(image, name), SHADE_ORDER, 4, 0)
             if name.startswith("t_"):
@@ -272,5 +389,6 @@ def evaluate(sample, agreement, name, spec, target, thresholds):
     scores = grid.score_frames(np.array(frames), agreement, name, scale=spec["scale"])
     if templates:
         scores.pop("reference", None)
-        scores.update(template=float(np.mean(templates)), details=float(np.mean(details)))
+        scores.update(template=float(np.mean(templates)), details=float(np.mean(details)),
+                      balance=float(np.mean(balances)))
     return grid.to_png(np.array(frames)), scores
