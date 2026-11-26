@@ -9,10 +9,12 @@ gen_sprites.py で作り直したら、その後にこれを実行する。
 - キャラ・敵・アイテム：1段明るくし、外側に1pxの縁取りを付けて太く見せる
 """
 import argparse
+import json
 import os
 import shutil
 from PIL import Image
 from knight_parts import HEAD_ROWS
+from hires_parts import HEAD_ROWS as HIRES_HEAD_ROWS
 from sprite_palette import GREEN as PAL, SHADE_BY_RGB as IDX
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +35,6 @@ RULES = {
 ACTORS = ["player_idle", "player_walk", "player_jump", "player_attack", "player_attack_air",
           "bat", "bat_hang", "skeleton", "ghost", "boss_skull", "boss_wing",
           "candle", "heart", "gem", "bone", "fireball", "orb"]
-FRAME_W = {"candle": 8, "heart": 8, "gem": 8, "bone": 8, "fireball": 8, "orb": 8}
 
 
 def load(name):
@@ -65,7 +66,7 @@ def remap(px, table):
     return [[table[v] if v else 0 for v in row] for row in px]
 
 
-def outline(px, fw):
+def outline(px, fw, shade=OUTLINE):
     """フレームごとに、不透明ピクセルの上下左右の透明マスへ縁を付ける（フレームをはみ出さない）"""
     h, w = len(px), len(px[0])
     out = [row[:] for row in px]
@@ -77,16 +78,19 @@ def outline(px, fw):
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
                 if f0 <= nx < f0 + fw and 0 <= ny < h and px[ny][nx]:
-                    out[y][x] = OUTLINE
+                    out[y][x] = shade
                     break
     return out
 
 
-def polished_actor(name):
+def polished_actor(name, spec):
     px = load(name)
     if name.startswith("player_"):
         return px
-    return outline(remap(px, ACTOR), FRAME_W.get(name, 16))
+    frame_width = len(px[0]) // len(spec["frames"])
+    if spec.get("scale") == 2 and frame_width == spec["size"][0]:
+        return outline(px, frame_width, 4)
+    return outline(remap(px, ACTOR), frame_width)
 
 
 def main():
@@ -94,18 +98,23 @@ def main():
     parser.add_argument("--only", nargs="+", choices=[*RULES, *ACTORS])
     args = parser.parse_args()
     selected = set(args.only or [*RULES, *ACTORS])
+    with open(os.path.join(HERE, "sprite_prompts.json"), encoding="utf-8") as source:
+        sprites = json.load(source)["sprites"]
     for name, (table, _) in RULES.items():
         if name in selected:
             px = load(name)
-            save(name, remap(px, table) if table else px)
+            high_res = sprites[name].get("scale") == 2 and len(px) == sprites[name]["size"][1]
+            save(name, remap(px, table) if table and not high_res else px)
     for name in ACTORS:
         if name not in selected:
             continue
-        px = polished_actor(name)
+        px = polished_actor(name, sprites[name])
         if name == "player_walk":
-            idle = polished_actor("player_idle")
-            for y in range(HEAD_ROWS):
-                px[y] = idle[y] * (len(px[y]) // len(idle[y]))
+            idle = polished_actor("player_idle", sprites["player_idle"])
+            if len(px[0]) == 4 * len(idle[0]) and len(px) == len(idle):
+                head_rows = HIRES_HEAD_ROWS if len(idle[0]) == 32 else HEAD_ROWS
+                for y in range(head_rows):
+                    px[y] = idle[y] * 4
         save(name, px)
 
 
