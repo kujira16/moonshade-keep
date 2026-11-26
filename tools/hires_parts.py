@@ -4,13 +4,15 @@ import numpy as np
 from PIL import Image
 
 if __package__:
+    from . import knight_details as stamps
     from . import knight_parts as knight, sprite_grid as grid
 else:
+    import knight_details as stamps
     import knight_parts as knight
     import sprite_grid as grid
 
 
-HEAD_ROWS = 14
+HEAD_ROWS = 18
 REDUCTION_ORDER = "EABOFPHCWTSLK."
 SHADE_ORDER = (4, 1, 2, 3, 0)
 
@@ -337,17 +339,13 @@ def score_detail(parts):
     return sum(anchors.values()) / len(anchors)
 
 
-def has_knight_details(frame, attacking):
-    eye = frame[12:15, 22:24]
+def has_knight_details(frame, attacking, details):
     braid = frame[9:15, 8:12]
-    pauldron = frame[19:24, 9:14]
-    hilt = frame[15:19, 23] if attacking else frame[24, 8:11]
+    hilt = frame[15:18, 23] if attacking else frame[24, 8:11]
     return all((
-        np.count_nonzero(eye == 4) == 5 and np.count_nonzero(eye == 1) == 1,
+        stamps.has_stamps(frame, details),
         np.count_nonzero(frame[:4] == 1) == 4,
         np.count_nonzero(braid == 3) >= 2 and np.count_nonzero(braid == 2) >= 4,
-        np.count_nonzero(pauldron == 2) >= 8 and np.any(pauldron == 1),
-        np.all(frame[21:23, [16, 19]] == 3),
         np.all(frame[24, 18:20] == 1) and np.any(hilt == 1),
     ))
 
@@ -371,9 +369,10 @@ def evaluate(sample, agreement, name, spec, target, thresholds):
             templates.append(float(weights[(parts == target) & overlap].sum() / weights[overlap].sum()))
             details.append(score_detail(parts))
             frame, shares, hair_ink = knight_details(parts, target, name)
+            layout = spec["details"][i]
             torso = knight_interior(frame)[18:]
             torso_dark = np.count_nonzero(torso & (frame[18:] == 4)) / max(1, np.count_nonzero(torso))
-            if (not has_knight_details(frame, "attack" in name) or
+            if (not has_knight_details(stamps.stamp(frame, layout), "attack" in name, layout) or
                     max(shares[3], torso_dark) > .25 or hair_ink or len(checker_locations(frame))):
                 return None, {}
             balances.append(shade_balance(shares))

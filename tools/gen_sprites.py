@@ -422,13 +422,13 @@ def update_knight_preview(sprites):
 
 
 def remember_baseline(sprites):
-    baseline = RAW / "_baseline_knight_cleanup"
+    baseline = RAW / "_baseline_knight_details"
     baseline.mkdir(exist_ok=True)
     snapshot = PREVIEW / "compare.png"
     stored = {}
     if snapshot.exists():
         with Image.open(snapshot) as previous:
-            stored = json.loads(previous.info.get("knight_cleanup_before", "{}"))
+            stored = json.loads(previous.info.get("knight_details_before", "{}"))
     for name in sprites:
         if not name.startswith("player_"):
             continue
@@ -446,7 +446,7 @@ def remember_baseline(sprites):
 def update_comparison(sprites):
     panels = []
     knight_specs = {name: spec for name, spec in sprites.items() if name.startswith("player_")}
-    before = RAW / "_baseline_knight_cleanup"
+    before = RAW / "_baseline_knight_details"
     if not all((before / f"{name}.png").is_file() for name in knight_specs):
         return
     baseline = {}
@@ -486,7 +486,7 @@ def update_comparison(sprites):
     output.paste(panels[0], (0, 0))
     output.paste(panels[1], (0, panels[0].height))
     metadata = PngImagePlugin.PngInfo()
-    metadata.add_text("knight_cleanup_before", json.dumps(baseline, separators=(",", ":")), zip=True)
+    metadata.add_text("knight_details_before", json.dumps(baseline, separators=(",", ":")), zip=True)
     output.save(PREVIEW / "compare.png", pnginfo=metadata)
 
 
