@@ -12,9 +12,11 @@ import argparse
 import json
 import os
 import shutil
+import numpy as np
 from PIL import Image
+from knight_details import stamp
 from knight_parts import HEAD_ROWS
-from hires_parts import HEAD_ROWS as HIRES_HEAD_ROWS
+from hires_parts import HEAD_ROWS as HIRES_HEAD_ROWS, has_knight_details
 from sprite_palette import GREEN as PAL, SHADE_BY_RGB as IDX
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +88,12 @@ def outline(px, fw, shade=OUTLINE):
 def polished_actor(name, spec):
     px = load(name)
     if name.startswith("player_"):
+        layouts = spec.get("details")
+        if len(px) == 32 and layouts:
+            if len(px[0]) != 32 * len(layouts) or len(layouts) != len(spec["frames"]):
+                raise ValueError(f"{name} must have one detail layout per frame")
+            frames = np.split(np.array(px, dtype=np.uint8), len(layouts), axis=1)
+            px = np.concatenate([stamp(frame, layout) for frame, layout in zip(frames, layouts)], axis=1).tolist()
         return px
     frame_width = len(px[0]) // len(spec["frames"])
     if spec.get("scale") == 2 and frame_width == spec["size"][0]:
@@ -115,6 +123,12 @@ def main():
                 head_rows = HIRES_HEAD_ROWS if len(idle[0]) == 32 else HEAD_ROWS
                 for y in range(head_rows):
                     px[y] = idle[y] * 4
+        if name.startswith("player_") and len(px) == 32 and sprites[name].get("details"):
+            layouts = sprites[name]["details"]
+            frames = np.split(np.array(px, dtype=np.uint8), len(layouts), axis=1)
+            for number, (frame, layout) in enumerate(zip(frames, layouts), 1):
+                if not has_knight_details(frame, "attack" in name, layout):
+                    raise ValueError(f"{name} frame {number} is missing a detail stamp")
         save(name, px)
 
 
