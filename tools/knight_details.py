@@ -4,11 +4,12 @@ import numpy as np
 
 
 PAULDRON = np.array([
-    [0, 4, 4, 4, 4, 0],
-    [4, 1, 1, 1, 1, 4],
-    [4, 1, 2, 2, 1, 4],
-    [4, 2, 2, 2, 2, 4],
-    [4, 2, 2, 2, 2, 4],
+    # 丸い肩当て：上が丸いドーム形。縁を一番明るい色で光らせ、下側は影
+    [0, 0, 4, 4, 0, 0],
+    [0, 4, 1, 1, 4, 0],
+    [4, 1, 1, 2, 2, 4],
+    [4, 1, 2, 2, 2, 4],
+    [4, 2, 2, 2, 3, 4],
     [0, 4, 4, 4, 4, 0],
 ], dtype=np.uint8)
 EYE = np.array([[1, 4], [4, 4], [4, 4]], dtype=np.uint8)
@@ -23,8 +24,7 @@ def hair_points(strokes):
 
 
 def shoulders(details):
-    x, y = details["pauldron_back"]
-    yield np.s_[y - 3:y + 3, x:x + 3], PAULDRON[:, 3:]
+    # 奥の肩当ては体に隠れる前提で描かない（胸の上に丸が2つ並ぶと、ボタンや目に見えるため）
     x, y = details["pauldron"]
     yield np.s_[y - 3:y + 3, x - 3:x + 3], PAULDRON
 
