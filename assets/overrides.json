@@ -1,5 +1,6 @@
 {
   "_help": "差し替えたいスプライト名: 1フレームの横幅(px) を書き、assets/<名前>.png を置く。例: \"skeleton\": 16",
+  "renderScale": 2,
   "sprites": {
     "player_idle": 16,
     "player_walk": 16,
